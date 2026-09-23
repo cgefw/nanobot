@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { CharacterDetails } from "@/components/Characters";
 import { SessionHandleLabel } from "@/components/SessionHandleLabel";
 import {
   Tooltip,
@@ -105,6 +106,7 @@ export function ThreadHeader({
       </div>
 
       <div className={cn(controlsClassName, "ml-auto shrink-0")}>
+        <CharacterDetails />
         {sessionInfoAction}
         {promptNavigatorAction}
         {actions}

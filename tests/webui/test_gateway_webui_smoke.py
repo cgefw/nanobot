@@ -343,3 +343,77 @@ def test_gateway_restart_restores_a_completed_answer_without_replaying_model(
         asyncio.run(assert_attach_state())
     finally:
         _stop_gateway(second)
+
+
+@pytest.mark.asyncio
+async def test_character_process_proxy_auth_and_isolated_greeting(tmp_path: Path) -> None:
+    import base64
+
+    ws_port = _free_port()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config_path = tmp_path / "config.json"
+    log_path = tmp_path / "characters.log"
+    _write_smoke_config(config_path, workspace=workspace, ws_port=ws_port, gateway_port=_free_port())
+    process = _start_gateway(config_path, log_path)
+    base = f"http://127.0.0.1:{ws_port}"
+    try:
+        boot = await asyncio.to_thread(_wait_for_bootstrap, base, process, log_path)
+        async with websockets.connect(f'{boot["ws_url"]}?token={boot["token"]}') as manager:
+            await _recv_until(manager, "ready")
+            async def mutate(action, payload):
+                await manager.send(json.dumps({"type": "webui_request", "request_id": str(time.time_ns()),
+                                               "action": action, "payload": payload}))
+                response = await _recv_until(manager, "webui_response")
+                assert response["ok"], response
+                return response["result"]
+
+            ids = []
+            for name in ["Alice", "Bob"]:
+                raw = json.dumps({"name": name, "first_mes": "Hello {{user}} from {{char}}",
+                                  "alternate_greetings": ["Other {{char}}"]}).encode()
+                result = await mutate("characters.import", {"data": base64.b64encode(raw).decode()})
+                ids.append(result["id"])
+            chats = []
+            async with httpx.AsyncClient(trust_env=False, timeout=30) as http:
+                for role_id, name in zip(ids, ["Alice", "Bob"]):
+                    prefix = f"{base}/_characters/{role_id}"
+                    denied = await http.get(f"{prefix}/webui/bootstrap")
+                    assert denied.status_code == 401
+                    res = await http.get(f"{prefix}/webui/bootstrap", headers={"X-Nanobot-Auth": _BOOTSTRAP_SECRET})
+                    assert res.status_code == 200, res.text
+                    child = res.json()
+                    async with websockets.connect(f'{child["ws_url"]}?token={child["token"]}') as ws:
+                        await _recv_until(ws, "ready")
+                        await ws.send(json.dumps({"type": "new_chat", "greeting_index": 1}))
+                        attached = await _recv_until(ws, "attached")
+                        chats.append(attached["chat_id"])
+                        # The first reply is persisted without any provider call.
+                        sessions = SessionManager(tmp_path / "characters" / role_id / "workspace",
+                                                  sessions_root=tmp_path / "characters" / role_id / "sessions")
+                        saved = sessions.get_or_create(f'websocket:{attached["chat_id"]}')
+                        assert saved.messages[0]["content"] == f"Other {name}"
+                        saved.add_message("user", "Hello")
+                        assert saved.get_history()[0]["content"] == f"Other {name}"
+                        denied_api = await http.get(f"{prefix}/api/sessions", headers={"Authorization": f'Bearer {boot["api_token"]}'})
+                        assert denied_api.status_code == 401
+                        allowed_api = await http.get(f"{prefix}/api/sessions", headers={"Authorization": f'Bearer {child["api_token"]}'})
+                        assert allowed_api.status_code == 200
+                        assert chats[0] not in allowed_api.text if name == "Bob" else chats[0] in allowed_api.text
+                        remote = await http.get(f"{prefix}/api/workspaces", headers={
+                            "Authorization": f'Bearer {child["api_token"]}',
+                            "X-Forwarded-For": "203.0.113.20",
+                            "X-Nanobot-Character-Proxy": "forged",
+                        })
+                        assert remote.status_code == 200
+                        assert remote.json()["controls"]["can_use_full_access"] is False
+                        forged = await http.get(f"{prefix}/api/sessions", headers={
+                            "X-Nanobot-Character-Proxy": "forged",
+                        })
+                        assert forged.status_code == 401
+                for role_id in ids:
+                    await mutate("characters.stop", {"id": role_id})
+                    stopped = await http.get(f"{base}/_characters/{role_id}/api/sessions")
+                    assert stopped.status_code == 409
+    finally:
+        await asyncio.to_thread(_stop_gateway, process)

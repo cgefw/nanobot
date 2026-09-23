@@ -72,6 +72,8 @@ class AutoCompact:
         active_session_keys: Collection[str] = (),
     ) -> None:
         """Schedule archival for idle sessions, skipping those with in-flight agent tasks."""
+        if self._ttl <= 0:
+            return
         now = datetime.now()
         for info in self.sessions.list_sessions():
             key = info.get("key", "")

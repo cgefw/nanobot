@@ -69,7 +69,9 @@ class MemoryStore:
         r"^\[\d{4}-\d{2}-\d{2}[^\]]*\]\s+[A-Z][A-Z0-9_]*(?:\s+\[tools:\s*[^\]]+\])?:"
     )
 
-    def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
+    def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY,
+                 *, fixed_character: bool = False):
+        self.fixed_character = fixed_character
         self.workspace = workspace
         self.max_history_entries = max_history_entries
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -527,6 +529,8 @@ class MemoryStore:
         )
 
     def _dream_template(self) -> str:
+        if self.fixed_character:
+            return render_template("agent/roleplay_dream.md")
         text, original_chars = load_workspace_prompt_override(self.dream_prompt_file)
         if text is not None:
             if (
@@ -589,7 +593,9 @@ class MemoryStore:
         skills_dir.mkdir(parents=True, exist_ok=True)
 
         extra_read = [BUILTIN_SKILLS_DIR] if BUILTIN_SKILLS_DIR.exists() else None
-        editable_files = [self.memory_file, self.soul_file, self.user_file]
+        editable_files = [self.memory_file, self.user_file]
+        if not self.fixed_character:
+            editable_files.append(self.soul_file)
 
         tools.register(ReadFileTool(
             workspace=workspace,
@@ -601,18 +607,21 @@ class MemoryStore:
             workspace=workspace,
             allowed_dir=skills_dir,
             extra_write_allowed_files=editable_files,
+            exact_write_files_only=self.fixed_character,
             file_states=file_states,
         ))
         tools.register(ApplyPatchTool(
             workspace=workspace,
             allowed_dir=skills_dir,
             extra_write_allowed_files=editable_files,
+            exact_write_files_only=self.fixed_character,
             file_states=file_states,
         ))
         tools.register(WriteFileTool(
             workspace=workspace,
             allowed_dir=skills_dir,
             extra_write_allowed_files=editable_files,
+            exact_write_files_only=self.fixed_character,
             file_states=file_states,
         ))
         return tools
@@ -882,7 +891,7 @@ class MemoryArchiver:
             )
 
         prompt = render_template(
-            "agent/consolidator_archive.md",
+            "agent/roleplay_archive.md" if self.store.fixed_character else "agent/consolidator_archive.md",
             strip=True,
             archive_count=len(source_messages),
         )

@@ -20,6 +20,8 @@ import {
   toModelBadgeInfo,
 } from "@/components/thread/model-preset";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
+import { CharacterWelcome } from "@/components/Characters";
+import { characterId } from "@/lib/characters";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
 import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
 import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
@@ -1692,7 +1694,7 @@ export function ThreadShell({
     </div>
   ) : (
     <div className="flex w-full flex-col items-center text-center animate-in fade-in-0 slide-in-from-bottom-2 [animation-duration:220ms] motion-reduce:animate-none">
-      <HeroGreeting text={t(heroGreetingKey)} />
+      {characterId() && !temporary ? <CharacterWelcome /> : <HeroGreeting text={t(heroGreetingKey)} />}
     </div>
   );
   const sessionInfoAction = historyKey ? (

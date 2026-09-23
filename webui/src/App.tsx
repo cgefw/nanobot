@@ -1,3 +1,4 @@
+import { characterStorageKey } from "@/lib/characters";
 import {
   lazy,
   Suspense,
@@ -12,6 +13,7 @@ import { ArrowRight, ChevronDown, Eye, EyeOff, Moon, ShieldCheck, Sun, X } from 
 import { Trans, useTranslation } from "react-i18next";
 import { channelUiPresentation } from "@/channel-plugins/registry";
 import { Sidebar } from "@/components/Sidebar";
+import { CharacterSidebar } from "@/components/Characters";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { SidebarResizeHandle, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from "@/components/SidebarResizeHandle";
 import { matchSidebarShortcut } from "@/lib/sidebar-shortcuts";
@@ -110,10 +112,10 @@ type BootState =
     };
 
 const SIDEBAR_STORAGE_KEY = "nanobot-webui.sidebar";
-const SESSION_UPDATES_STORAGE_KEY = "nanobot-webui.sidebar.session-updates.v1";
-const LEGACY_COMPLETED_RUNS_STORAGE_KEY = "nanobot-webui.sidebar.completed-runs.v1";
-const RESTART_STARTED_KEY = "nanobot-webui.restartStartedAt";
-const RESTART_ROUTE_KEY = "nanobot-webui.restartRoute";
+const SESSION_UPDATES_STORAGE_KEY = characterStorageKey("nanobot-webui.sidebar.session-updates.v1");
+const LEGACY_COMPLETED_RUNS_STORAGE_KEY = characterStorageKey("nanobot-webui.sidebar.completed-runs.v1");
+const RESTART_STARTED_KEY = characterStorageKey("nanobot-webui.restartStartedAt");
+const RESTART_ROUTE_KEY = characterStorageKey("nanobot-webui.restartRoute");
 const RESTART_ROUTE_TTL_MS = 5 * 60 * 1000;
 const SIDEBAR_WIDTH = 272;
 const SIDEBAR_WIDTH_STORAGE_KEY = "nanobot-webui.sidebar.width";
@@ -2730,6 +2732,7 @@ function Shell({
                 )}
               >
                 <Sidebar
+                  characterSelector={<CharacterSidebar />}
                   {...sidebarProps}
                   collapsed={!hostSidebarOpen}
                   hostChromeInset={showHostChrome}
@@ -2768,6 +2771,7 @@ function Shell({
               >
                 <SheetTitle className="sr-only">{t("sidebar.navigation")}</SheetTitle>
                 <Sidebar
+                  characterSelector={<CharacterSidebar />}
                   {...sidebarProps}
                   onCollapse={closeMobileSidebar}
                   containActionMenus

@@ -2279,7 +2279,7 @@ When a user is idle for longer than a configured threshold, nanobot **proactivel
 {
   "agents": {
     "defaults": {
-      "idleCompactAfterMinutes": 15,
+      "idleCompactAfterMinutes": 0,
       "idleCompactCheckIntervalSeconds": 60
     }
   }
@@ -2288,7 +2288,7 @@ When a user is idle for longer than a configured threshold, nanobot **proactivel
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `agents.defaults.idleCompactAfterMinutes` | `15` | Minutes of idle time before auto-compaction starts. Set to `0` to disable. The default is close to a typical LLM KV cache expiry window, so stale sessions get compacted before the user returns. |
+| `agents.defaults.idleCompactAfterMinutes` | `0` | Idle compaction is disabled by default. Set a positive number of minutes to opt in. Manual and context-capacity compaction remain available. |
 | `agents.defaults.idleCompactCheckIntervalSeconds` | `60` | Minimum number of seconds between scans for idle sessions. Set to `0` to scan on every idle tick (~1 s). |
 
 `sessionTtlMinutes` remains accepted as a legacy alias for backward compatibility, but `idleCompactAfterMinutes` is the preferred config key going forward.

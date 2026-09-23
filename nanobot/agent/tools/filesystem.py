@@ -56,6 +56,7 @@ class _FsTool(Tool):
         restrict_to_workspace: bool | None = None,
         sandbox_restricts_workspace: bool = False,
         extra_read_allowed_files: list[Path] | None = None,
+        exact_write_files_only: bool = False,
     ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
@@ -68,6 +69,9 @@ class _FsTool(Tool):
         self._extra_read_allowed_files = list(extra_read_allowed_files or [])
         self._extra_write_allowed_dirs = list(extra_write_allowed_dirs or [])
         self._extra_write_allowed_files = list(extra_write_allowed_files or [])
+        if exact_write_files_only and not self._extra_write_allowed_files:
+            raise ValueError("exact_write_files_only requires a nonempty file allowlist")
+        self._exact_write_files_only = exact_write_files_only
         self._restrict_to_workspace = (
             bool(restrict_to_workspace)
             if restrict_to_workspace is not None
@@ -130,13 +134,14 @@ class _FsTool(Tool):
         *,
         include_media_dir: bool,
         extra_files_require_allowed_root: bool = False,
+        exact_files_only: bool = False,
     ) -> Path:
         access = current_tool_workspace(
             self._workspace,
             restrict_to_workspace=self._restrict_to_workspace,
             sandbox_restricts_workspace=self._sandbox_restricts_workspace,
         )
-        allowed_root = self._effective_allowed_root(access.allowed_root)
+        allowed_root = None if exact_files_only else self._effective_allowed_root(access.allowed_root)
         if extra_files_require_allowed_root and allowed_root is None:
             extra_allowed_files = None
         return resolve_workspace_path(
@@ -185,6 +190,7 @@ class _FsTool(Tool):
             self._extra_write_allowed_dirs,
             self._extra_write_allowed_files,
             include_media_dir=False,
+            exact_files_only=self._exact_write_files_only,
         )
 
     def _resolve(self, path: str) -> Path:

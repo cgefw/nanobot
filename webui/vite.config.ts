@@ -160,6 +160,7 @@ export default defineConfig(({ mode }) => {
         path: hmrPath,
       },
       proxy: {
+        "/_characters": { target, changeOrigin: true, ws: true },
         "/webui": { target, changeOrigin: true },
         "/api": { target, changeOrigin: true },
         "/auth": { target, changeOrigin: true },

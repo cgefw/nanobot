@@ -1,0 +1,249 @@
+"""Bounded V1/V2/V3 character-card import and cached prompt rendering."""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import io
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
+
+from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+
+from nanobot.utils.helpers import estimate_message_tokens, truncate_text_to_tokens
+from nanobot.utils.prompt_templates import render_template
+
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+MAX_CARD_BYTES = 1024 * 1024
+MAX_SCAN_CHARS = 16_384
+_MACROS = re.compile(r"\{\{(char|user|original)\}\}|<(BOT|USER)>", re.IGNORECASE)
+
+
+class LoreEntry(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    keys: list[str] = Field(default_factory=list, max_length=128)
+    secondary_keys: list[str] = Field(default_factory=list, max_length=128)
+    content: str = ""
+    enabled: bool = True
+    constant: bool = False
+    selective: bool = False
+    case_sensitive: bool = False
+    insertion_order: int = 0
+    priority: int = 0
+    position: Literal["before_char", "after_char"] = "after_char"
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def default_priority(cls, value: Any) -> Any:
+        return 0 if value is None else value
+
+
+class CharacterBook(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    entries: list[LoreEntry] = Field(default_factory=list, max_length=1000)
+    scan_depth: int = Field(default=4, ge=0, le=100)
+    token_budget: int = Field(default=2048, ge=0, le=16_384)
+    recursive_scanning: bool = False
+
+
+class CharacterCard(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    name: str = Field(min_length=1, max_length=256)
+    description: str = ""
+    personality: str = ""
+    scenario: str = ""
+    first_mes: str = ""
+    mes_example: str = ""
+    system_prompt: str = ""
+    post_history_instructions: str = ""
+    alternate_greetings: list[str] = Field(default_factory=list, max_length=100)
+    character_book: CharacterBook | None = None
+    creator_notes: str = ""
+    creator: str = ""
+    tags: list[str] = Field(default_factory=list)
+    extensions: dict[str, Any] = Field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ImportedCard:
+    card: CharacterCard
+    source: bytes
+    avatar: bytes | None
+    warnings: tuple[str, ...]
+
+    def preview(self) -> dict[str, Any]:
+        return {
+            "card": self.card.model_dump(), "warnings": list(self.warnings),
+            "avatar": base64.b64encode(self.avatar).decode() if self.avatar else None,
+        }
+
+
+def parse_card(raw: bytes, filename: str = "card.json") -> ImportedCard:
+    if not raw or len(raw) > MAX_UPLOAD_BYTES:
+        raise ValueError("Character card must be between 1 byte and 8 MiB")
+    avatar = None
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        try:
+            with Image.open(io.BytesIO(raw)) as image:
+                if image.width * image.height > 16_000_000:
+                    raise ValueError("Character avatar exceeds 16 megapixels")
+                encoded = image.info.get("ccv3") or image.info.get("chara")
+                if not isinstance(encoded, str) or len(encoded) > MAX_CARD_BYTES * 2:
+                    raise ValueError("PNG has no supported character-card metadata")
+                source = base64.b64decode(encoded, validate=True)
+                image.load()
+                image.thumbnail((512, 512))
+                clean = Image.new("RGBA", image.size)
+                clean.paste(image.convert("RGBA"))
+                output = io.BytesIO()
+                clean.save(output, format="PNG")
+                avatar = output.getvalue()
+        except (OSError, UnidentifiedImageError, binascii.Error, Image.DecompressionBombError) as exc:
+            raise ValueError("Invalid PNG character card") from exc
+    elif filename.lower().endswith(".png"):
+        raise ValueError("Invalid PNG signature")
+    else:
+        source = raw
+    if len(source) > MAX_CARD_BYTES:
+        raise ValueError("Decoded character data exceeds 1 MiB")
+    try:
+        document = json.loads(source.decode("utf-8-sig"))
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise ValueError("Invalid character-card JSON") from exc
+    if not isinstance(document, dict):
+        raise ValueError("Character card must be a JSON object")
+    document = TypeAdapter(dict[str, Any]).validate_python(document)
+    spec = document.get("spec")
+    if spec not in (None, "chara_card_v2", "chara_card_v3"):
+        raise ValueError("Unsupported character-card specification")
+    data = document if spec is None else document.get("data")
+    card = CharacterCard.model_validate(data)
+    warnings: list[str] = []
+    if spec == "chara_card_v3":
+        warnings.append("V3: basic character fields only; assets and CHARX are not supported.")
+    if card.extensions or (card.character_book and any(e.model_extra for e in card.character_book.entries)):
+        warnings.append("Extension fields are preserved but scripts and advanced lore rules are not executed.")
+    if card.character_book and card.character_book.recursive_scanning:
+        warnings.append("Recursive lore scanning is not supported.")
+    return ImportedCard(card, source, avatar, tuple(warnings))
+
+
+class CharacterProfile:
+    """One parsed card per agent; bounded lore scan independent of total history size."""
+
+    def __init__(self, path: Path, user_name: str = "用户") -> None:
+        self.path = path
+        self.user_name = user_name
+        self._stamp: tuple[int, int] | None = None
+        self._card: CharacterCard | None = None
+        self._identity_text: str | None = None
+        self._warnings: tuple[str, ...] = ()
+        self._lore: list[tuple[LoreEntry, tuple[str, ...], tuple[str, ...], int]] = []
+
+    @property
+    def card(self) -> CharacterCard:
+        stat = self.path.stat()
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        if self._card is None or self._stamp != stamp:
+            if stat.st_size > MAX_CARD_BYTES:
+                raise ValueError("Character data exceeds 1 MiB")
+            imported = parse_card(self.path.read_bytes())
+            card = imported.card
+            self._warnings = imported.warnings
+            self._card = card
+            self._stamp = stamp
+            self._identity_text = None
+            self._lore = []
+            for entry in sorted(
+                card.character_book.entries if card.character_book else [],
+                key=lambda e: (-e.priority, e.insertion_order),
+            ):
+                def normalize(value: str) -> str:
+                    value = self.expand(value)
+                    return value if entry.case_sensitive else value.casefold()
+                self._lore.append((
+                    entry, tuple(normalize(k) for k in entry.keys if k),
+                    tuple(normalize(k) for k in entry.secondary_keys if k),
+                    estimate_message_tokens({"role": "system", "content": self.expand(entry.content)}),
+                ))
+        return self._card
+
+    def expand(self, text: str, original: str = "") -> str:
+        name = self.card.name
+        def replace(match: re.Match[str]) -> str:
+            key = (match.group(1) or match.group(2)).lower()
+            return {"char": name, "bot": name,
+                    "user": self.user_name, "original": original}[key]
+        return _MACROS.sub(replace, text)
+
+    def identity(self) -> str:
+        card = self.card
+        if self._identity_text is not None:
+            return self._identity_text
+        original = render_template("agent/roleplay.md")
+        parts = [self.expand(card.system_prompt, original) if card.system_prompt else original]
+        parts.extend(f"## {label}\n{self.expand(value)}" for label, value in (
+            ("Character", card.name), ("Description", card.description),
+            ("Personality", card.personality), ("Scenario", card.scenario),
+            ("Dialogue examples (fictional style examples, not actual history)", card.mes_example),
+        ) if value)
+        self._identity_text = "\n\n".join(parts)
+        return self._identity_text
+
+    def greetings(self) -> list[str]:
+        return [self.expand(text) for text in [self.card.first_mes, *self.card.alternate_greetings] if text]
+
+    def preview(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"card": self.card.model_dump(), "greetings": self.greetings(),
+                  "warnings": list(self._warnings), "avatar": None}
+        avatar = self.path.with_name("avatar.png")
+        if avatar.exists() and avatar.stat().st_size <= 2 * MAX_CARD_BYTES:
+            result["avatar"] = base64.b64encode(avatar.read_bytes()).decode()
+        return result
+
+    def lore(self, history: list[dict[str, Any]], current: str | None) -> tuple[str, str]:
+        book = self.card.character_book
+        if book is None or book.token_budget == 0:
+            return "", ""
+        # Inspect at most scan_depth messages, never flatten the full transcript.
+        recent = history[-book.scan_depth:] if book.scan_depth else []
+        texts = [m["content"][-MAX_SCAN_CHARS:] for m in recent
+                 if m.get("role") in {"user", "assistant"} and isinstance(m.get("content"), str)]
+        text = "\n".join([*texts, (current or "")[-MAX_SCAN_CHARS:]])[-MAX_SCAN_CHARS:]
+        folded = text.casefold()
+        remaining = book.token_budget
+        selected: list[LoreEntry] = []
+        for entry, keys, secondary, cost in self._lore:
+            if not entry.enabled or not entry.content:
+                continue
+            scan = text if entry.case_sensitive else folded
+            matched = any(k in scan for k in keys)
+            if entry.selective:
+                matched = matched and any(k in scan for k in secondary)
+            if (entry.constant or matched) and cost <= remaining:
+                remaining -= cost
+                selected.append(entry)
+        selected.sort(key=lambda e: e.insertion_order)
+        before = "\n\n".join(self.expand(e.content) for e in selected if e.position == "before_char")
+        after = "\n\n".join(self.expand(e.content) for e in selected if e.position == "after_char")
+        return before, after
+
+    def post_history(self) -> str:
+        return self.expand(self.card.post_history_instructions)
+
+    def bounded_identity(self, budget: int) -> str:
+        identity = self.identity()
+        instructions = identity + "\n" + self.post_history()
+        if truncate_text_to_tokens(instructions, budget) != instructions:
+            raise ValueError("Character definition exceeds its context budget; shorten the card")
+        for greeting in self.greetings():
+            if truncate_text_to_tokens(greeting, budget) != greeting:
+                raise ValueError("Character greeting exceeds its context budget; shorten the card")
+        return identity

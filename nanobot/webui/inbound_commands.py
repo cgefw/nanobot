@@ -306,6 +306,18 @@ class WebUICommandRouter:
             if scope is None:
                 return
             self._workspaces.stage_scope(new_id, scope)
+            character = self.gateway.http.character
+            sessions = self.gateway.session_manager
+            if character and sessions and (greetings := character.greetings()):
+                index = envelope.get("greeting_index", 0)
+                index = index if isinstance(index, int) and 0 <= index < len(greetings) else 0
+                self._workspaces.persist_scope(new_id, scope)
+                session = sessions.get_or_create(webui_session_key(new_id))
+                session.add_message("assistant", greetings[index], _channel_delivery=True)
+                sessions.save(session)
+                self._transcripts.append(new_id, {
+                    "event": "message", "chat_id": new_id, "text": greetings[index],
+                })
             self._transport.webui_attach(connection, new_id)
             await self._transport.webui_send_event(
                 connection,

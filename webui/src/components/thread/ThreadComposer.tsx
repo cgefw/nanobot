@@ -1,3 +1,4 @@
+import { characterStorageKey } from "@/lib/characters";
 import {
   useCallback,
   useEffect,
@@ -255,7 +256,7 @@ const SLASH_PALETTE_GAP_PX = 8;
 const SLASH_PALETTE_MAX_HEIGHT_PX = 288;
 const SLASH_PALETTE_MIN_HEIGHT_PX = 144;
 const SLASH_PALETTE_CHROME_PX = 12;
-const SLASH_RECENTS_STORAGE_KEY = "nanobot.webui.slashCommandRecents";
+const SLASH_RECENTS_STORAGE_KEY = characterStorageKey("nanobot.webui.slashCommandRecents");
 const SLASH_RECENTS_LIMIT = 5;
 const QUEUED_PROMPTS_STORAGE_PREFIX = "nanobot.webui.composerQueuedGuidance.v1:";
 const QUEUED_PROMPTS_LIMIT = 20;
@@ -435,7 +436,7 @@ function storeSlashRecents(commands: string[]): void {
 
 function queuedPromptsStorageKey(key?: string | null): string | null {
   const clean = key?.trim();
-  return clean ? `${QUEUED_PROMPTS_STORAGE_PREFIX}${clean}` : null;
+  return clean ? characterStorageKey(`${QUEUED_PROMPTS_STORAGE_PREFIX}${clean}`) : null;
 }
 
 function normalizeQueuedSessionMentions(value: unknown): SessionMention[] {

@@ -19,6 +19,7 @@ from nanobot.bus.events import (
     RUNTIME_CONTROL_SESSION_DISCARD,
     InboundMessage,
 )
+from nanobot.roleplay.cards import CharacterProfile
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     RuntimeContextBlock,
@@ -92,10 +93,12 @@ class ContextBuilder:
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md"]
     _SKIPPABLE_DEFAULTS = {"AGENTS.md", "USER.md"}
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
+    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None,
+                 character_card: str | None = None, user_name: str = "用户"):
         self.workspace = workspace
         self.timezone = timezone
-        self.memory = MemoryStore(workspace)
+        self.character = CharacterProfile(Path(character_card), user_name) if character_card else None
+        self.memory = MemoryStore(workspace, fixed_character=bool(self.character))
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
 
     def build_system_prompt(
@@ -105,10 +108,15 @@ class ContextBuilder:
         session_summary: SessionSummary | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        character_lore: tuple[str, str] = ("", ""),
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
         parts = [self._get_identity(channel=channel, workspace=root)]
+        if self.character and channel != "dream":
+            parts.extend(filter(None, (
+                character_lore[0], self.character.identity(), character_lore[1],
+            )))
 
         bootstrap = self._load_bootstrap_files(root)
         if bootstrap:
@@ -202,6 +210,8 @@ class ContextBuilder:
         ]
 
         for filename, root in sources:
+            if filename == "SOUL.md" and self.character:
+                continue
             file_path = root / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
@@ -291,6 +301,10 @@ class ContextBuilder:
                     session_summary=transcript.session_summary,
                     workspace=root,
                     include_memory=include_memory,
+                    character_lore=(
+                        self.character.lore(transcript.history, transcript.current_message)
+                        if self.character and channel != "dream" else ("", "")
+                    ),
                 ),
             },
             *transcript.history,
@@ -305,6 +319,8 @@ class ContextBuilder:
             runtime_context_blocks=transcript.runtime_context_blocks,
         )
         messages.append(current)
+        if self.character and channel != "dream" and (instructions := self.character.post_history()):
+            messages.append({"role": "system", "content": instructions})
         return messages
 
     def build_current_message(

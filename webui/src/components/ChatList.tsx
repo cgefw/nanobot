@@ -1,3 +1,4 @@
+import { characterStorageKey } from "@/lib/characters";
 import {
   memo,
   useCallback,
@@ -78,7 +79,7 @@ import type { ChatSummary, SidebarDensity, SidebarSortMode } from "@/lib/types";
 const INITIAL_VISIBLE_SESSIONS = 160;
 const VISIBLE_SESSIONS_INCREMENT = 160;
 const ACTION_MENU_CONTENT_CLASS = "w-[11rem] min-w-[11rem] whitespace-nowrap";
-const COLLAPSED_PANE_GROUPS_STORAGE_KEY = "nanobot-webui.collapsed-pane-groups.v1";
+const COLLAPSED_PANE_GROUPS_STORAGE_KEY = characterStorageKey("nanobot-webui.collapsed-pane-groups.v1");
 const DETACH_PANE_DROP_TARGET = "__sidebar-standalone__";
 
 interface SidebarActionMenuController {

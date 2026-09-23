@@ -371,6 +371,15 @@ class GatewayHTTPHandler:
         self.ingress = ingress
         self.workspaces = workspaces
         self.settings = settings
+        from nanobot.roleplay.cards import CharacterProfile
+        from nanobot.roleplay.manager import CharacterManager
+
+        profile_config = settings.config.load()
+        card_path = profile_config.agents.defaults.character_card
+        self.character = (
+            CharacterProfile(Path(card_path), profile_config.roleplay.user_name) if card_path else None
+        )
+        self.characters = None if self.character else CharacterManager(settings.config)
         self.skills_workspace_path = skills_workspace_path
         self.disabled_skills: set[str] = (
             disabled_skills if disabled_skills is not None else set()
@@ -487,6 +496,11 @@ class GatewayHTTPHandler:
         payload: dict[str, Any],
     ) -> Response:
         """Run one explicitly allowlisted mutation for an authenticated WebUI socket."""
+        if action.startswith("characters.") and self.characters is not None:
+            try:
+                return _http_json_response(await self.characters.mutate(action, payload))
+            except (ValueError, OSError) as exc:
+                return _http_error(400, str(exc))
         path = self._webui_mutation_path(action, payload)
         if isinstance(path, Response):
             return path
@@ -559,6 +573,23 @@ class GatewayHTTPHandler:
         request: WsRequest,
         got: str,
     ) -> Any | None:
+        if got == "/api/characters" or got.startswith("/api/characters/"):
+            if not self.check_api_token(request):
+                return _http_error(401, "Unauthorized")
+            try:
+                if self.characters is not None:
+                    manager = self.characters
+                    payload = await asyncio.to_thread(
+                        manager.listing if got == "/api/characters"
+                        else lambda: manager.details(got.rsplit("/", 1)[-1]),
+                    )
+                elif self.character is not None and got == "/api/characters/current":
+                    payload = self.character.preview()
+                else:
+                    return _http_error(404, "Character not found")
+                return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
+            except (ValueError, OSError) as exc:
+                return _http_error(400, str(exc))
         # Token issue endpoint
         if self.config.token_issue_path:
             issue_expected = _normalize_config_path(self.config.token_issue_path)
@@ -737,6 +768,13 @@ class GatewayHTTPHandler:
             payload["api_token"] = api_token
         return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
 
+    def character_bootstrap_auth(self, connection: Any, request: WsRequest) -> Response:
+        """Check the normal bootstrap policy without allocating tokens."""
+        return self._handle_bootstrap(connection, request, terminal_probe=True)
+
+    def character_public_ws_url(self, request: WsRequest) -> str:
+        return self._bootstrap_ws_url(request)
+
     def _bootstrap_ws_url(self, request: Any) -> str:
         headers = getattr(request, "headers", {}) or {}
         if self.config.public_ws_url:
@@ -757,7 +795,10 @@ class GatewayHTTPHandler:
 
         public_ws_url = urlsplit(self._bootstrap_ws_url(request))
         scheme = "https" if public_ws_url.scheme == "wss" else "http"
-        return urlunsplit((scheme, public_ws_url.netloc, MCP_OAUTH_CALLBACK_PATH, "", ""))
+        path = MCP_OAUTH_CALLBACK_PATH
+        if self.character and re.fullmatch(r"[a-f0-9]{32}", self.character.path.parent.name):
+            path = f"/_characters/{self.character.path.parent.name}{path}"
+        return urlunsplit((scheme, public_ws_url.netloc, path, "", ""))
 
     # -- Session routes -----------------------------------------------------
 

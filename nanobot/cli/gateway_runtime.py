@@ -579,6 +579,7 @@ def _run_gateway(
                 await mcp_provider.connect()
                 resp = await agent.process_direct(
                     prompt,
+                    channel="dream" if store.fixed_character else "cli",
                     session_key=key,
                     ephemeral=True,
                     tools=store.build_dream_tools(),

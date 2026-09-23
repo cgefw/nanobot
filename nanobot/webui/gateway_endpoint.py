@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from websockets.asyncio.server import ServerConnection
 from websockets.http11 import Request as WsRequest
 
+from nanobot.roleplay.proxy import CharacterProxy
 from nanobot.webui.gateway_tokens import GatewayTokenStore
 from nanobot.webui.http_utils import (
     is_trusted_proxy_authenticated_request,
@@ -48,6 +49,7 @@ class WebUIGatewayEndpoint:
         self._http = http
         self._tokens = tokens
         self.webui_connections: set[ServerConnection] = set()
+        self.character_proxy = CharacterProxy(http.characters, http) if http.characters else None
 
     async def process_request(
         self,
@@ -57,6 +59,10 @@ class WebUIGatewayEndpoint:
         is_allowed: Callable[[str], bool],
     ) -> Any:
         """Route one listener request to a WS handshake or the HTTP application."""
+        if request.path.startswith("/_characters/"):
+            if self.character_proxy:
+                return await self.character_proxy.dispatch(connection, request)
+            return connection.respond(404, "Character management is unavailable")
         got, query = parse_request_path(request.path)
         expected_ws = normalize_config_path(self._config.path)
         if got == expected_ws and is_websocket_upgrade(request):

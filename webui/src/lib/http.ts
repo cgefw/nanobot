@@ -1,3 +1,5 @@
+import { characterUrl } from "./characters";
+
 const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
 export async function fetchWithTimeout(
@@ -5,6 +7,7 @@ export async function fetchWithTimeout(
   init: RequestInit = {},
   timeoutMs: number = DEFAULT_HTTP_TIMEOUT_MS,
 ): Promise<Response> {
+  if (typeof input === "string") input = characterUrl(input);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return fetch(input, init);
   }

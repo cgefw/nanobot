@@ -1,3 +1,4 @@
+import { characterUrl } from "@/lib/characters";
 import {
   Children,
   isValidElement,
@@ -313,7 +314,7 @@ const safeMarkdownUrl: NonNullable<StreamdownProps["urlTransform"]> = (url) => {
     || (slash !== -1 && colon > slash)
     || (questionMark !== -1 && colon > questionMark)
     || (hash !== -1 && colon > hash);
-  return relative || SAFE_MARKDOWN_PROTOCOL.test(url.slice(0, colon)) ? url : "";
+  return relative || SAFE_MARKDOWN_PROTOCOL.test(url.slice(0, colon)) ? characterUrl(url) : "";
 };
 
 function nodeText(value: ReactNode): string {

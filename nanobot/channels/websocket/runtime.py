@@ -792,6 +792,9 @@ class WebSocketChannel(BaseChannel):
                 self._server_task = None
 
     async def _connection_loop(self, connection: ServerConnection) -> None:
+        proxy = self.gateway.endpoint.character_proxy
+        if proxy and await proxy.relay(connection):
+            return
         self._retired_connections.discard(connection)
         request = connection.request
         path_part = request.path if request else "/"
@@ -913,6 +916,8 @@ class WebSocketChannel(BaseChannel):
         if retire_tasks:
             await asyncio.gather(*retire_tasks, return_exceptions=True)
         await self._commands.close()
+        if self.gateway.endpoint.character_proxy:
+            await self.gateway.endpoint.character_proxy.close()
         self._subs.clear()
         self._conn_chats.clear()
         self._conn_default.clear()

@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { sidebarShortcutAria, sidebarShortcutLabel } from "@/lib/sidebar-shortcuts";
 
 interface SidebarProps {
+  characterSelector?: ReactNode;
   sessions: ChatSummary[];
   temporarySessions?: ChatSummary[];
   activeKey: string | null;
@@ -199,6 +200,7 @@ export function Sidebar(props: SidebarProps) {
         )}
       </div>
 
+      {!collapsed && props.characterSelector}
       <SidebarSelectionHighlight
         targetRef={activeActionRef}
         activeId={activeActionId}

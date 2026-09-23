@@ -66,7 +66,7 @@ def _parse_mcp_oauth_redirect_uri(redirect_uri: str) -> tuple[str, SplitResult, 
     if (
         not parsed.netloc
         or not parsed.hostname
-        or parsed.path != MCP_OAUTH_CALLBACK_PATH
+        or re.sub(r"^/_characters/[a-f0-9]{32}(?=/)", "", parsed.path) != MCP_OAUTH_CALLBACK_PATH
         or parsed.query
         or parsed.fragment
         or parsed.username is not None

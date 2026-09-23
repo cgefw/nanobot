@@ -1,3 +1,5 @@
+import { characterId, selectedGreeting } from "./characters";
+
 import { decodeNotification } from "../../../packages/client-events/notifications";
 import type {
   ConnectionStatus,
@@ -831,6 +833,7 @@ export class NanobotClient {
       this.pendingNewChat = { resolve, reject, timer, temporary: false };
       this.queueSend({
         type: "new_chat",
+        ...(characterId() ? { greeting_index: selectedGreeting() } : {}),
         ...(workspaceScope ? { workspace_scope: workspaceScope } : {}),
       });
     });

@@ -1,3 +1,4 @@
+import { characterUrl } from "./characters";
 import type { UIMediaAttachment, UIMediaKind } from "@/lib/types";
 
 const IMAGE_EXTENSIONS = new Set([
@@ -58,7 +59,7 @@ export function toMediaAttachment(media: {
 }): UIMediaAttachment {
   return {
     kind: explicitMediaKind(media) ?? media.kind ?? "file",
-    url: media.url,
+    url: media.url ? characterUrl(media.url) : media.url,
     name: media.name,
   };
 }
