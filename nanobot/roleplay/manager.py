@@ -107,6 +107,7 @@ class CharacterManager:
         child = parent.model_copy(deep=True)
         child.agents.defaults.workspace = str(directory / "workspace")
         child.agents.defaults.character_card = str(directory / "card.json")
+        child.agents.defaults.session_ttl_minutes = 0
         child.gateway.heartbeat.enabled = False
         for channel in (child.channels.model_extra or {}).values():
             if isinstance(channel, dict):

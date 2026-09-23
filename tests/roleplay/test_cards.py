@@ -109,14 +109,17 @@ def test_idle_disabled_does_not_scan_sessions():
     sessions.list_sessions.assert_not_called()
 
 
-def test_import_is_lazy_and_isolated(tmp_path):
+@pytest.mark.parametrize("idle_minutes", [0, 15, 30])
+def test_import_is_lazy_and_isolated(tmp_path, idle_minutes):
     settings = WebUISettingsConfig(tmp_path / "config.json")
     settings.update(lambda c: setattr(c.channels, "telegram", {"enabled": True, "token": "parent-only"}))
+    settings.update(lambda c: setattr(c.agents.defaults, "session_ttl_minutes", idle_minutes))
     manager = CharacterManager(settings)
     ids = [manager.import_card({"data": base64.b64encode(encoded_card(name)).decode()})["id"]
            for name in ("Alice", "Bob")]
     assert ids[0] != ids[1]
     assert not manager._leases
+    assert settings.load().agents.defaults.session_ttl_minutes == idle_minutes
     for role_id in ids:
         raw = json.loads((manager.directory(role_id) / "config.json").read_text())
         assert raw["channels"]["telegram"]["enabled"] is False

@@ -1,13 +1,15 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { BookOpen, Upload, Users } from "lucide-react";
+import { lazy, Suspense, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { BookOpen, Check, ChevronDown, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useClient } from "@/providers/ClientProvider";
 import { fetchBootstrap, loadSavedSecret } from "@/lib/bootstrap";
 import { fetchWithTimeout } from "@/lib/http";
 import { characterId, selectGreeting, selectedGreeting, switchCharacter } from "@/lib/characters";
 
-type Character = { id: string; name: string; running: boolean };
+export type Character = { id: string; name: string; running: boolean };
 const CharacterMarkdown = lazy(() => import("@/components/MarkdownTextRenderer"));
 type CardPreview = {
   card: { name: string; description: string; personality: string; scenario: string;
@@ -25,7 +27,7 @@ async function readJson<T>(url: string, token: string): Promise<T> {
 }
 
 let parentCredentials: ReturnType<typeof fetchBootstrap> | undefined;
-async function listCharacters(token: string): Promise<Character[]> {
+export async function listCharacters(token: string): Promise<Character[]> {
   if (characterId()) {
     parentCredentials ??= fetchBootstrap(window.location.origin, loadSavedSecret());
     token = (await parentCredentials).api_token ?? "";
@@ -37,10 +39,10 @@ async function listCharacters(token: string): Promise<Character[]> {
 }
 
 function CardContent({ preview }: { preview: CardPreview }) {
-  return <div className="space-y-4 text-sm">
+  return <div className="min-w-0 space-y-4 text-[13px] leading-6">
     {preview.avatar && <img src={`data:image/png;base64,${preview.avatar}`} alt={preview.card.name}
-      className="h-32 w-32 rounded-xl object-cover" />}
-    <p className="text-lg font-medium">{preview.card.name}</p>
+      className="h-32 w-32 rounded-control object-cover" />}
+    <p className="text-base font-medium">{preview.card.name}</p>
     {[["角色描述", preview.card.description], ["性格", preview.card.personality],
       ["场景", preview.card.scenario], ["开场白", preview.card.first_mes],
       ["对话示例", preview.card.mes_example], ["作者说明", preview.card.creator_notes],
@@ -54,20 +56,48 @@ function CardContent({ preview }: { preview: CardPreview }) {
     {preview.card.character_book && <p className="text-muted-foreground">
       世界书：{preview.card.character_book.entries.length} 条
     </p>}
-    {preview.warnings?.map((warning) => <p key={warning} className="text-amber-700 dark:text-amber-400">{warning}</p>)}
+    {preview.warnings?.map((warning) => <p key={warning} className="text-amber-700 dark:text-amber-300">{warning}</p>)}
   </div>;
+}
+
+function CharacterSheet({ title, description, children, footer }: {
+  title: string;
+  description: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
+  return <SheetContent
+    side="right"
+    closeButtonClassName="right-2 top-2 inline-flex h-10 w-10 items-center justify-center rounded-full opacity-100 text-muted-foreground settings-hover hover:text-foreground sm:right-3 sm:top-3"
+    className="w-full max-w-none gap-0 overflow-hidden border-l-0 p-0 sm:w-[min(34rem,calc(100vw-1rem))] sm:max-w-none sm:border-l"
+  >
+    <div className="shrink-0 border-b border-border/45 px-4 py-4 pr-14 sm:px-5 sm:py-5 sm:pr-16">
+      <SheetTitle className="text-[19px] font-semibold sm:text-[20px]">{title}</SheetTitle>
+      <SheetDescription className="mt-1 text-[13px] leading-6">{description}</SheetDescription>
+    </div>
+    <div className="min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-5">
+      {children}
+    </div>
+    {footer && <div className="flex shrink-0 justify-end border-t border-border/45 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5">
+      {footer}
+    </div>}
+  </SheetContent>;
 }
 
 export function CharacterSidebar() {
   const { client, getToken } = useClient();
   const [characters, setCharacters] = useState<Character[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => window.location.hash === "#/new?importCharacter=1");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<CardPreview | null>(null);
   const upload = useRef<{ data: string; filename: string } | null>(null);
+  const pickerId = useId();
   const current = characterId();
   useEffect(() => {
+    if (window.location.hash === "#/new?importCharacter=1") {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/new`);
+    }
     let active = true;
     void listCharacters(getToken()).then((items) => { if (active) setCharacters(items); })
       .catch(() => { /* The base chat remains usable on older gateways. */ });
@@ -104,47 +134,43 @@ export function CharacterSidebar() {
     finally { setBusy(false); }
   }
 
-  async function stopCharacter(id: string) {
-    setBusy(true); setError("");
-    try {
-      await client.requestMutation("characters.stop", { id }, 30_000);
-      setCharacters(await listCharacters(getToken()));
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setBusy(false); }
-  }
-
-  return <div className="px-3 pb-3 space-y-2">
-    <label className="text-xs text-muted-foreground" htmlFor="character-picker">当前角色</label>
-    <select id="character-picker" aria-label="当前角色" value={current}
-      className="w-full rounded-lg border bg-background px-2 py-2 text-sm"
-      onChange={(event) => switchCharacter(event.target.value)}>
-      <option value="">默认助手</option>
-      {characters.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
-    </select>
-    <Button variant="ghost" className="w-full justify-start gap-2 text-xs" onClick={() => {
-      if (current) switchCharacter(""); else setOpen(true);
-    }}><Users className="h-4 w-4" />{current ? "返回角色管理 / 系统设置" : "角色管理 · 导入角色卡"}</Button>
+  return <div className="space-y-1 px-2 pb-2">
+    <label className="block px-2 py-1 text-xs text-muted-foreground" htmlFor={pickerId}>当前角色</label>
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button id={pickerId} variant="outline" aria-label="当前角色" className="h-9 w-full justify-between rounded-full px-3 text-[13px] font-normal shadow-none settings-hover">
+          <span className="truncate">{current ? characters.find((role) => role.id === current)?.name ?? "载入角色…" : "默认助手"}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+        {[{ id: "", name: "默认助手" }, ...characters].map((role) => <DropdownMenuItem key={role.id}
+          role="menuitemradio" aria-checked={current === role.id}
+          className={current === role.id ? "bg-muted" : undefined}
+          onSelect={() => { if (current !== role.id) switchCharacter(role.id); }}>
+          <span className="min-w-0 flex-1 truncate">{role.name}</span>
+          {current === role.id && <Check aria-hidden />}
+        </DropdownMenuItem>)}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => { if (current) switchCharacter("", "/new?importCharacter=1"); else setOpen(true); }}>
+          <Upload aria-hidden />导入角色卡
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent className="overflow-y-auto sm:max-w-lg">
-        <div><SheetTitle>角色管理</SheetTitle></div>
-        <p className="text-sm text-muted-foreground">每个角色拥有独立的聊天和记忆。打开角色后开始运行，停止后保留所有记录。</p>
-        <div className="space-y-2">
-          {characters.map((role) => <div key={role.id} className="flex items-center gap-2 rounded-lg border p-3">
-            <span className="min-w-0 flex-1 truncate">{role.name}</span>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => switchCharacter(role.id)}>打开</Button>
-            {role.running && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void stopCharacter(role.id)}>停止</Button>}
-          </div>)}
-        </div>
-        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed p-5 text-sm">
-          <Upload className="h-4 w-4" />导入 JSON / PNG 角色卡
+      <CharacterSheet title="导入角色卡" description="选择 JSON 或 PNG 角色卡，预览后确认导入。"
+        footer={preview && <Button className="h-9 w-full rounded-full sm:w-auto" disabled={busy} onClick={() => void importCard()}>确认导入</Button>}
+      >
+        <label className="flex min-h-24 cursor-pointer items-center justify-center gap-2 rounded-control border border-dashed border-border px-4 py-5 text-[13px] settings-hover focus-within:ring-2 focus-within:ring-ring has-[:disabled]:pointer-events-none has-[:disabled]:opacity-50">
+          <Upload className="h-4 w-4 shrink-0" /><span>导入 JSON / PNG 角色卡</span>
           <input aria-label="导入角色卡" type="file" accept=".json,.png" className="sr-only" disabled={busy}
             onChange={(event) => { void chooseFile(event.target.files?.[0]); event.target.value = ""; }} />
         </label>
-        <p className="text-xs text-muted-foreground">支持 V1 / V2 和 V3 基础字段，世界书支持关键词匹配；不执行角色卡脚本。</p>
+        <p className="text-xs leading-5 text-muted-foreground">支持 V1 / V2 和 V3 基础字段，世界书支持关键词匹配；不执行角色卡脚本。</p>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {busy && <p role="status" className="text-sm text-muted-foreground">处理中…</p>}
-        {preview && <><CardContent preview={preview} /><Button disabled={busy} onClick={() => void importCard()}>确认导入</Button></>}
-      </SheetContent>
+        {preview && <CardContent preview={preview} />}
+      </CharacterSheet>
     </Sheet>
   </div>;
 }
@@ -162,11 +188,10 @@ function CharacterDetailsContent() {
   return <><Button variant="ghost" size="icon" aria-label="角色设定" title="角色设定" onClick={() => void show()}>
     <BookOpen className="h-4 w-4" />
   </Button><Sheet open={open} onOpenChange={setOpen}>
-    <SheetContent className="overflow-y-auto sm:max-w-lg">
-      <div><SheetTitle>角色设定</SheetTitle></div>
+    <CharacterSheet title="角色设定" description="查看当前角色的背景、性格与开场白。">
       {preview && <CardContent preview={preview} />}
       {error && <p role="alert">{error}</p>}
-    </SheetContent>
+    </CharacterSheet>
   </Sheet></>;
 }
 
@@ -193,10 +218,12 @@ export function CharacterWelcome() {
         <CharacterMarkdown>{preview?.greetings?.[index] ?? preview?.greetings?.[0] ?? ""}</CharacterMarkdown>
       </Suspense>
     </div>
-    {(preview?.greetings?.length ?? 0) > 1 && <select aria-label="选择开场白"
-      className="rounded-lg border bg-background p-2 text-sm" value={index}
-      onChange={(event) => { const next = Number(event.target.value); setIndex(next); selectGreeting(next); }}>
-      {preview?.greetings?.map((_, i) => <option key={i} value={i}>开场白 {i + 1}</option>)}
-    </select>}
+    {(preview?.greetings?.length ?? 0) > 1 && <Select value={String(index)}
+      onValueChange={(value) => { const next = Number(value); setIndex(next); selectGreeting(next); }}>
+      <SelectTrigger aria-label="选择开场白" className="w-fit rounded-full font-normal shadow-none settings-hover"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {preview?.greetings?.map((_, i) => <SelectItem key={i} value={String(i)}>开场白 {i + 1}</SelectItem>)}
+      </SelectContent>
+    </Select>}
   </div>;
 }

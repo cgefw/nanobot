@@ -7,6 +7,7 @@ export type SettingsSectionKey =
   | "about"
   | "appearance"
   | "models"
+  | "characters"
   | "capabilities"
   | "image"
   | "voice"

@@ -19,10 +19,10 @@ export function characterStorageKey(key: string): string {
   return id ? `${key}.character.${id}` : key;
 }
 
-export function switchCharacter(id: string): void {
+export function switchCharacter(id: string, hash = "/new"): void {
   const url = new URL(window.location.href);
   if (id) url.searchParams.set("character", id);
   else url.searchParams.delete("character");
-  url.hash = "/new";
+  url.hash = hash;
   window.location.assign(url);
 }
