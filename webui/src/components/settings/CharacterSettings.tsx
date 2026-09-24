@@ -33,7 +33,7 @@ export function CharacterSettings() {
   return <section className="settings-stack">
     <div className="settings-section-heading">
       <SettingsSectionTitle>角色管理</SettingsSectionTitle>
-      <p className="w-full text-[13px] leading-6 text-muted-foreground">每个角色拥有独立的聊天和记忆。停止后保留所有记录，再次打开即可继续。</p>
+      <p className="w-full text-[13px] leading-6 text-muted-foreground">每个角色拥有独立的聊天和记忆。启用 QQ 后随主服务自动上线，关闭网页不影响连接。手动停止后保留所有记录，再次打开才恢复上线。</p>
     </div>
     {loading ? <p role="status" className="settings-list-inset text-[13px] text-muted-foreground">载入角色…</p>
       : characters.length > 0 ? <SettingsGroup>

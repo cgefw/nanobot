@@ -11,6 +11,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
+from nanobot.channels.contracts import channel_default_config, channel_instance_specs
+from nanobot.channels.qq.manifest import PLUGIN as QQ_PLUGIN
 from nanobot.config.loader import save_config
 from nanobot.config.schema import Config
 from nanobot.gateway.runtime import GatewayClientLease, GatewayInstance, GatewayRuntime
@@ -35,6 +39,23 @@ class CharacterManager:
         self._leases: dict[str, GatewayClientLease] = {}
         self._ports: dict[str, int] = {}
         self._lock = asyncio.Lock()
+        self._restore_task: asyncio.Task[None] | None = None
+        self._closing = False
+
+    def start(self) -> None:
+        """Restore once after the main listener is ready, without delaying the WebUI."""
+        if self._restore_task is None and not self._closing:
+            self._restore_task = asyncio.create_task(self._restore_enabled())
+
+    async def _restore_enabled(self) -> None:
+        for role_id in list(await asyncio.to_thread(self.entries)):
+            if self._closing:
+                break
+            try:
+                await self.ensure_started(role_id, automatic=True)
+            except Exception as exc:
+                # Validation errors may contain credential-bearing input values.
+                logger.warning("Character {} could not be restored ({})", role_id, type(exc).__name__)
 
     def entries(self) -> dict[str, dict[str, str]]:
         if self._entries is None:
@@ -108,6 +129,8 @@ class CharacterManager:
         child.agents.defaults.workspace = str(directory / "workspace")
         child.agents.defaults.character_card = str(directory / "card.json")
         child.agents.defaults.session_ttl_minutes = 0
+        child.agents.defaults.unified_session = False
+        child.roleplay.auto_start = True
         child.gateway.heartbeat.enabled = False
         for channel in (child.channels.model_extra or {}).values():
             if isinstance(channel, dict):
@@ -124,13 +147,32 @@ class CharacterManager:
         )
         child.channels = type(child.channels).model_validate({
             **child.channels.model_dump(), "websocket": ws.model_dump(by_alias=True),
+            "qq": channel_default_config(QQ_PLUGIN),
         })
         child.gateway.host = "127.0.0.1"
         return child
 
-    async def ensure_started(self, role_id: str) -> int:
+    def _prepare_start(self, path: Path, automatic: bool) -> bool:
+        child = Config.model_validate_json(path.read_text())
+        if automatic:
+            qq = (child.channels.model_extra or {}).get("qq", {})
+            return child.roleplay.auto_start and bool(channel_instance_specs(QQ_PLUGIN, qq))
+        if not child.roleplay.auto_start:
+            child.roleplay.auto_start = True
+            save_config(child, path)
+        return True
+
+    async def ensure_started(self, role_id: str, *, automatic: bool = False) -> int | None:
         async with self._lock:
+            if self._closing:
+                raise ValueError("Character manager is shutting down")
             directory = self.directory(role_id)
+            settings = WebUISettingsConfig(directory / "config.json")
+            # Check inside the same lock as stop so a queued restore cannot undo a manual stop.
+            if not await asyncio.to_thread(
+                settings.run_serialized, lambda path: self._prepare_start(path, automatic),
+            ):
+                return None
             if role_id in self._ports:
                 lease = self._leases[role_id]
                 status = await asyncio.to_thread(lease.runtime.status)
@@ -143,7 +185,7 @@ class CharacterManager:
             runtime = GatewayRuntime(paths=instance.paths)
             lease = GatewayClientLease(runtime, kind="character-manager")
 
-            def start() -> int:
+            def start(_path: Path) -> int:
                 # Refresh only listener credentials; per-character model/tool settings persist.
                 parent = self.settings.load()
                 raw = json.loads(instance.config_path.read_text())
@@ -172,7 +214,7 @@ class CharacterManager:
                 return ws.port
 
             try:
-                port = await asyncio.to_thread(start)
+                port = await asyncio.to_thread(settings.run_serialized, start)
             except BaseException:
                 await asyncio.to_thread(lease.release)
                 raise
@@ -195,17 +237,31 @@ class CharacterManager:
                 raise
             return port
 
-    async def stop(self, role_id: str) -> None:
+    async def stop(self, role_id: str, *, persist: bool = True) -> None:
         async with self._lock:
-            self.directory(role_id)
+            directory = self.directory(role_id)
+            if persist:
+                def pause(path: Path) -> None:
+                    child = Config.model_validate_json(path.read_text())
+                    child.roleplay.auto_start = False
+                    save_config(child, path)
+
+                await asyncio.to_thread(
+                    WebUISettingsConfig(directory / "config.json").run_serialized, pause,
+                )
             lease = self._leases.pop(role_id, None)
             self._ports.pop(role_id, None)
             if lease:
                 await asyncio.to_thread(lease.release)
 
     async def close(self) -> None:
+        self._closing = True
+        if self._restore_task:
+            # A cancelled to_thread startup can finish after its lease was released.
+            # Let the current bounded startup finish before releasing children.
+            await self._restore_task
         for role_id in list(self._leases):
-            await self.stop(role_id)
+            await self.stop(role_id, persist=False)
 
     async def mutate(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         if action == "characters.import":

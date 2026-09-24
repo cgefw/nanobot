@@ -744,6 +744,8 @@ class WebSocketChannel(BaseChannel):
                     self._running = True
                     started_at = asyncio.get_running_loop().time()
                     self._log_listener_ready(scheme)
+                    if self.gateway.endpoint.character_proxy:
+                        self.gateway.endpoint.character_proxy.manager.start()
                     await self._wait_for_listener_loss(server)
                 except asyncio.CancelledError:
                     raise

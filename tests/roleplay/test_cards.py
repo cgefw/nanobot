@@ -1,6 +1,8 @@
 import base64
 import io
 import json
+import struct
+import zlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -31,6 +33,62 @@ def test_png_metadata_avatar_and_v2(tmp_path):
     assert max(avatar.size) == 512
     assert "chara" not in avatar.info
     assert json.loads(imported.source) == data
+
+
+@pytest.mark.parametrize("keyword", ["chara", "ccv3"])
+def test_png_card_metadata_after_image_data(keyword):
+    raw = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(raw, "PNG")
+    source = encoded_card()
+    payload = keyword.encode() + b"\0" + base64.b64encode(source)
+    chunk = struct.pack(">I", len(payload)) + b"tEXt" + payload
+    chunk += struct.pack(">I", zlib.crc32(b"tEXt" + payload))
+    png = raw.getvalue()
+    imported = parse_card(png[:-12] + chunk + png[-12:], "late.png")
+    assert imported.source == source
+    assert imported.card.name == "Alice"
+    assert imported.avatar
+
+
+def test_plain_png_explains_missing_character_data():
+    raw = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(raw, "PNG")
+    with pytest.raises(ValueError, match="PNG 中未找到角色卡数据"):
+        parse_card(raw.getvalue(), "portrait.png")
+
+
+def test_aicc_fields_survive_import_and_reload(tmp_path):
+    data = {"name": "Alice", "general_description": "Description", "appearance": "Appearance",
+            "background_history": "Background", "world_setting_context": "Scenario",
+            "personality": {"core": "Kind", "behavior_rules": ["Patient"],
+                            "speech_style": {"tone": "Gentle", "patterns": ["Hello"]}},
+            "dialogue": {"greetings": ["Hi {{user}}", "Welcome"], "dialogue_examples": ["Example"]},
+            "prompts": {"system_prompt": "Stay in character", "post_history_instructions": "After"},
+            "world": {"worldbook_entries": [{"keys": ["tea"], "content": "Likes tea"}]},
+            "metadata": {"creator": "Author", "notes": "Notes", "tags": ["friendly"]}}
+    source = json.dumps({"spec": "aicc_card", "spec_version": "1.0", "data": data}).encode()
+    imported = parse_card(source)
+    path = tmp_path / "card.json"
+    path.write_bytes(imported.source)
+    assert imported.source == source
+    profile = CharacterProfile(path)
+    assert all(text in profile.identity() for text in (
+        "Description", "Appearance", "Background", "Scenario", "Kind", "Patient", "Gentle", "Example",
+    ))
+    assert profile.greetings() == ["Hi 用户", "Welcome"]
+    assert profile.post_history() == "After"
+    assert profile.lore([], "tea")[1] == "Likes tea"
+    assert profile.card.creator_notes == "Notes"
+    assert profile.card.creator == "Author"
+    assert profile.card.tags == ["friendly"]
+    assert any("AICC" in warning for warning in imported.warnings)
+
+
+@pytest.mark.parametrize("data", [None, [], {"name": "A", "personality": "invalid"},
+                                 {"name": "A", "dialogue": {"greetings": [123]}}])
+def test_invalid_aicc_fields_are_rejected(data):
+    with pytest.raises(ValueError):
+        parse_card(json.dumps({"spec": "aicc_card", "data": data}).encode())
 
 
 @pytest.mark.parametrize("raw,filename", [

@@ -424,6 +424,7 @@ class RoleplayConfig(Base):
     """Single-user character management on the existing WebUI gateway."""
 
     user_name: str = Field(default="用户", min_length=1, max_length=128)
+    auto_start: bool = True  # Restore this character when QQ is enabled.
 
 
 class Config(BaseSettings):

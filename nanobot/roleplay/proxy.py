@@ -50,8 +50,8 @@ class CharacterProxy:
                 port = await self.manager.ensure_started(role_id)
             else:
                 port = self.manager.port(role_id)
-                if port is None:
-                    return http_error(409, "Character is stopped; open it again from Characters")
+            if port is None:
+                return http_error(409, "Character is stopped; open it again from Characters")
             headers = {
                 key.lower(): value for key, value in request.headers.raw_items()
                 if key.lower() not in _HOP_HEADERS

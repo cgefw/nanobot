@@ -85,6 +85,41 @@ class ImportedCard:
         }
 
 
+def _aicc_fields(data: Any) -> dict[str, Any]:
+    mapping = TypeAdapter(dict[str, Any])
+    strings = TypeAdapter(list[str])
+    data = mapping.validate_python(data)
+    personality = mapping.validate_python(data.get("personality", {}))
+    speech = mapping.validate_python(personality.get("speech_style", {}))
+    dialogue = mapping.validate_python(data.get("dialogue", {}))
+    prompts = mapping.validate_python(data.get("prompts", {}))
+    world = mapping.validate_python(data.get("world", {}))
+    metadata = mapping.validate_python(data.get("metadata", {}))
+    greetings = strings.validate_python(dialogue.get("greetings", []))
+    return {
+        "name": data.get("name"),
+        "description": "\n\n".join(strings.validate_python([
+            data.get(key, "") for key in ("general_description", "appearance", "background_history")
+        ])).strip(),
+        "personality": "\n\n".join(strings.validate_python([
+            personality.get("core", ""),
+            *strings.validate_python(personality.get("behavior_rules", [])),
+            *(speech.get(key, "") for key in ("tone", "verbosity", "format")),
+            *strings.validate_python(speech.get("patterns", [])),
+        ])).strip(),
+        "scenario": data.get("world_setting_context", ""),
+        "first_mes": greetings[0] if greetings else "",
+        "alternate_greetings": greetings[1:],
+        "mes_example": "\n\n".join(strings.validate_python(dialogue.get("dialogue_examples", []))),
+        "system_prompt": prompts.get("system_prompt", ""),
+        "post_history_instructions": prompts.get("post_history_instructions", ""),
+        "character_book": {"name": world.get("worldbook_name", ""), "entries": world.get("worldbook_entries", [])},
+        "creator_notes": metadata.get("notes", ""),
+        "creator": metadata.get("creator", ""),
+        "tags": metadata.get("tags", []),
+    }
+
+
 def parse_card(raw: bytes, filename: str = "card.json") -> ImportedCard:
     if not raw or len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError("Character card must be between 1 byte and 8 MiB")
@@ -94,11 +129,14 @@ def parse_card(raw: bytes, filename: str = "card.json") -> ImportedCard:
             with Image.open(io.BytesIO(raw)) as image:
                 if image.width * image.height > 16_000_000:
                     raise ValueError("Character avatar exceeds 16 megapixels")
-                encoded = image.info.get("ccv3") or image.info.get("chara")
-                if not isinstance(encoded, str) or len(encoded) > MAX_CARD_BYTES * 2:
-                    raise ValueError("PNG has no supported character-card metadata")
-                source = base64.b64decode(encoded, validate=True)
+                # Text chunks may follow IDAT; opening the header alone misses them.
                 image.load()
+                encoded = image.info.get("ccv3") or image.info.get("chara")
+                if not isinstance(encoded, str) or not encoded:
+                    raise ValueError("PNG 中未找到角色卡数据（chara / ccv3）。请使用原始角色卡 PNG 或 JSON，截图或重新保存的图片可能没有角色数据。")
+                if len(encoded) > MAX_CARD_BYTES * 2:
+                    raise ValueError("PNG character-card metadata exceeds the size limit")
+                source = base64.b64decode(encoded, validate=True)
                 image.thumbnail((512, 512))
                 clean = Image.new("RGBA", image.size)
                 clean.paste(image.convert("RGBA"))
@@ -121,11 +159,13 @@ def parse_card(raw: bytes, filename: str = "card.json") -> ImportedCard:
         raise ValueError("Character card must be a JSON object")
     document = TypeAdapter(dict[str, Any]).validate_python(document)
     spec = document.get("spec")
-    if spec not in (None, "chara_card_v2", "chara_card_v3"):
+    if spec not in (None, "chara_card_v2", "chara_card_v3", "aicc_card"):
         raise ValueError("Unsupported character-card specification")
     data = document if spec is None else document.get("data")
-    card = CharacterCard.model_validate(data)
+    card = CharacterCard.model_validate(_aicc_fields(data) if spec == "aicc_card" else data)
     warnings: list[str] = []
+    if spec == "aicc_card":
+        warnings.append("AICC：已转换人物设定、开场白和世界书基础字段；不支持群聊开场白及深度提示定位。")
     if spec == "chara_card_v3":
         warnings.append("V3: basic character fields only; assets and CHARX are not supported.")
     if card.extensions or (card.character_book and any(e.model_extra for e in card.character_book.entries)):

@@ -8,6 +8,7 @@ import { useClient } from "@/providers/ClientProvider";
 import { fetchBootstrap, loadSavedSecret } from "@/lib/bootstrap";
 import { fetchWithTimeout } from "@/lib/http";
 import { characterId, selectGreeting, selectedGreeting, switchCharacter } from "@/lib/characters";
+import { cn } from "@/lib/utils";
 
 export type Character = { id: string; name: string; running: boolean };
 const CharacterMarkdown = lazy(() => import("@/components/MarkdownTextRenderer"));
@@ -89,6 +90,7 @@ export function CharacterSidebar() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [open, setOpen] = useState(() => window.location.hash === "#/new?importCharacter=1");
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<CardPreview | null>(null);
   const upload = useRef<{ data: string; filename: string } | null>(null);
@@ -105,8 +107,9 @@ export function CharacterSidebar() {
   }, [getToken]);
 
   async function chooseFile(file?: File) {
-    if (!file) return;
+    if (!file || busy) return;
     setError(""); setPreview(null); upload.current = null;
+    if (!/\.(json|png)$/i.test(file.name)) { setError("请选择 JSON 或 PNG 角色卡"); return; }
     if (file.size > 8 * 1024 * 1024) { setError("角色卡不能超过 8 MiB"); return; }
     setBusy(true);
     try {
@@ -158,15 +161,31 @@ export function CharacterSidebar() {
       </DropdownMenuContent>
     </DropdownMenu>
     <Sheet open={open} onOpenChange={setOpen}>
-      <CharacterSheet title="导入角色卡" description="选择 JSON 或 PNG 角色卡，预览后确认导入。"
+      <CharacterSheet title="导入角色卡" description="选择或拖入 JSON / PNG 角色卡，预览后确认导入。"
         footer={preview && <Button className="h-9 w-full rounded-full sm:w-auto" disabled={busy} onClick={() => void importCard()}>确认导入</Button>}
       >
-        <label className="flex min-h-24 cursor-pointer items-center justify-center gap-2 rounded-control border border-dashed border-border px-4 py-5 text-[13px] settings-hover focus-within:ring-2 focus-within:ring-ring has-[:disabled]:pointer-events-none has-[:disabled]:opacity-50">
-          <Upload className="h-4 w-4 shrink-0" /><span>导入 JSON / PNG 角色卡</span>
+        <label className={cn("flex min-h-24 cursor-pointer items-center justify-center gap-2 rounded-control border border-dashed border-border px-4 py-5 text-[13px] settings-hover focus-within:ring-2 focus-within:ring-ring has-[:disabled]:opacity-50", dragging && "border-ring bg-muted")}
+          onDragOver={(event) => {
+            event.preventDefault(); event.stopPropagation();
+            event.dataTransfer.dropEffect = busy ? "none" : "copy";
+            setDragging(!busy && event.dataTransfer.types.includes("Files"));
+          }}
+          onDragLeave={(event) => {
+            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault(); event.stopPropagation(); setDragging(false);
+            if (busy) return;
+            if (event.dataTransfer.files.length > 1) {
+              setError("每次只能导入一张角色卡"); setPreview(null); upload.current = null; return;
+            }
+            void chooseFile(event.dataTransfer.files[0]);
+          }}>
+          <Upload className="h-4 w-4 shrink-0" /><span>点击选择或拖入 JSON / PNG 角色卡</span>
           <input aria-label="导入角色卡" type="file" accept=".json,.png" className="sr-only" disabled={busy}
             onChange={(event) => { void chooseFile(event.target.files?.[0]); event.target.value = ""; }} />
         </label>
-        <p className="text-xs leading-5 text-muted-foreground">支持 V1 / V2 和 V3 基础字段，世界书支持关键词匹配；不执行角色卡脚本。</p>
+        <p className="text-xs leading-5 text-muted-foreground">支持 V1 / V2、V3 和 AICC 基础字段，世界书支持关键词匹配；不执行角色卡脚本。</p>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {busy && <p role="status" className="text-sm text-muted-foreground">处理中…</p>}
         {preview && <CardContent preview={preview} />}
