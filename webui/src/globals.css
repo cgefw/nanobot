@@ -419,6 +419,11 @@
     grid-template-rows: minmax(min-content, 1fr) auto 0fr;
     transition: grid-template-rows 220ms ease-out;
   }
+  .thread-layout[data-layout="hero"] {
+    /* Bound flexible rows to the viewport so a long greeting cannot also
+       inflate the trailing spacer and scroll the composer out of view. */
+    height: 100%;
+  }
   .thread-layout[data-layout="thread"] {
     grid-template-rows: minmax(0, 1fr) auto 0fr;
   }

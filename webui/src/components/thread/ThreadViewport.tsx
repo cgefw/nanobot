@@ -705,6 +705,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
+    const emptyState = emptyStateRef.current;
     const messageRegion = messageRegionRef.current;
     const messageContent = messageContentRef.current;
     const composerDock = composerDockRef.current;
@@ -723,6 +724,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       : new ResizeObserver(reconcileObservedGeometry);
     observer?.observe(el);
     if (content) observer?.observe(content);
+    if (emptyState) observer?.observe(emptyState);
     if (messageRegion) observer?.observe(messageRegion);
     if (messageContent) observer?.observe(messageContent);
     if (composerDock) observer?.observe(composerDock);
