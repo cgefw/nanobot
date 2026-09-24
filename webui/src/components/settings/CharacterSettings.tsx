@@ -46,7 +46,7 @@ export function CharacterSettings() {
               onClick={() => void stopCharacter(role.id)}>{busy === role.id ? "停止中…" : "停止"}</Button>}
           </div>
         </SettingsRow>)}
-      </SettingsGroup> : !error && <p className="settings-list-inset text-[13px] text-muted-foreground">暂无角色。可从侧栏的角色下拉菜单导入角色卡。</p>}
+      </SettingsGroup> : !error && <p className="settings-list-inset text-[13px] text-muted-foreground">暂无角色。可从侧栏的角色下拉菜单创建角色或导入角色卡。</p>}
     {error && <p role="alert" className="settings-list-inset text-[13px] text-destructive">{error}</p>}
   </section>;
 }

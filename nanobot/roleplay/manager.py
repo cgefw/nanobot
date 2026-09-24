@@ -18,7 +18,7 @@ from nanobot.channels.qq.manifest import PLUGIN as QQ_PLUGIN
 from nanobot.config.loader import save_config
 from nanobot.config.schema import Config
 from nanobot.gateway.runtime import GatewayClientLease, GatewayInstance, GatewayRuntime
-from nanobot.roleplay.cards import MAX_UPLOAD_BYTES, CharacterProfile, parse_card
+from nanobot.roleplay.cards import MAX_UPLOAD_BYTES, CharacterCard, CharacterProfile, parse_card
 from nanobot.webui.settings_services import WebUISettingsConfig
 
 PROXY_HEADER = "X-Nanobot-Character-Proxy"
@@ -89,6 +89,18 @@ class CharacterManager:
     def details(self, role_id: str) -> dict[str, Any]:
         directory = self.directory(role_id)
         return CharacterProfile(directory / "card.json").preview()
+
+    def create_card(self, payload: dict[str, Any]) -> dict[str, Any]:
+        card = CharacterCard.model_validate({
+            key: payload.get(key, "") for key in ("name", "system_prompt", "first_mes")
+        })
+        card.name = card.name.strip()
+        card.system_prompt = card.system_prompt.strip()
+        if not card.name or not card.system_prompt:
+            raise ValueError("请填写角色名称和 Agent 提示词")
+        # Reuse import validation, context limits, atomic storage and isolated config.
+        source = card.model_dump_json(exclude_defaults=True).encode("utf-8")
+        return self.import_card({"data": base64.b64encode(source).decode("ascii")})
 
     def import_card(self, payload: dict[str, Any]) -> dict[str, Any]:
         encoded = payload.get("data")
@@ -264,9 +276,10 @@ class CharacterManager:
             await self.stop(role_id, persist=False)
 
     async def mutate(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if action == "characters.import":
+        if action in {"characters.import", "characters.create"}:
             async with self._lock:
-                return await asyncio.to_thread(self.import_card, payload)
+                create = self.create_card if action == "characters.create" else self.import_card
+                return await asyncio.to_thread(create, payload)
         role_id = payload.get("id")
         if not isinstance(role_id, str):
             raise ValueError("Character id is required")
