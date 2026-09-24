@@ -3,6 +3,8 @@ import { BookOpen, Check, ChevronDown, Plus, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { SettingsGroup, SettingsRow } from "@/components/settings/shared/SettingsControls";
+import { SettingsTextEditor } from "@/components/settings/shared/SettingsTextEditor";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,10 +15,18 @@ import { characterId, selectGreeting, selectedGreeting, switchCharacter } from "
 import { cn } from "@/lib/utils";
 
 export type Character = { id: string; name: string; running: boolean };
+const AGENT_FILES = [
+  ["AGENTS.md", "工作规则、行为指令和任务处理方式"],
+  ["SOUL.md", "身份、性格、语气和表达风格"],
+  ["USER.md", "用户资料、偏好和沟通习惯"],
+] as const;
+const EMPTY_AGENT = { name: "", files: { "AGENTS.md": "", "SOUL.md": "", "USER.md": "" } };
 const CharacterMarkdown = lazy(() => import("@/components/MarkdownTextRenderer"));
 type CardPreview = {
-  card: { name: string; description: string; personality: string; scenario: string;
-    first_mes: string; mes_example: string; creator_notes: string; system_prompt?: string;
+  kind?: "agent";
+  files?: Record<string, string>;
+  card: { name: string; description?: string; personality?: string; scenario?: string;
+    first_mes?: string; mes_example?: string; creator_notes?: string; system_prompt?: string;
     alternate_greetings?: string[]; character_book?: { entries: unknown[] } };
   avatar?: string | null;
   warnings?: string[];
@@ -92,7 +102,7 @@ export function CharacterSidebar() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [mode, setMode] = useState<"import" | "create" | null>(() =>
     /^#\/new\?(import|create)Character=1$/.test(window.location.hash) ? "import" : null);
-  const [draft, setDraft] = useState({ name: "", system_prompt: "", first_mes: "" });
+  const [draft, setDraft] = useState(EMPTY_AGENT);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
@@ -118,11 +128,11 @@ export function CharacterSidebar() {
   }
 
   async function createCharacter() {
-    if (busy || !draft.name.trim() || !draft.system_prompt.trim()) return;
+    if (busy || !draft.name.trim()) return;
     setBusy(true); setError("");
     try {
       const role = await client.requestMutation<{ id: string }>("characters.create", draft);
-      setDraft({ name: "", system_prompt: "", first_mes: "" }); setMode(null);
+      setDraft(EMPTY_AGENT); setMode(null);
       switchCharacter(role.id);
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
@@ -183,10 +193,10 @@ export function CharacterSidebar() {
       </DropdownMenuContent>
     </DropdownMenu>
     <Sheet open={mode !== null} onOpenChange={(open) => { if (!open && !busy) setMode(null); }}>
-      <CharacterSheet title="创建角色" description="导入 JSON / PNG 角色卡，或在下方通过自定义提示词创建角色。"
+      <CharacterSheet title="创建角色" description="导入 JSON / PNG 角色卡，或在下方通过 Markdown 提示词文件创建 Agent。"
         footer={mode === "create"
           ? <Button type="submit" form={createFormId} className="h-9 w-full rounded-full sm:w-auto"
-            disabled={busy || !draft.name.trim() || !draft.system_prompt.trim()}>创建并打开</Button>
+            disabled={busy || !draft.name.trim()}>创建并打开</Button>
           : preview && <Button className="h-9 w-full rounded-full sm:w-auto" disabled={busy} onClick={() => void importCard()}>确认导入</Button>}
       >
         <label className={cn("flex min-h-24 cursor-pointer items-center justify-center gap-2 rounded-control border border-dashed border-border px-4 py-5 text-[13px] settings-hover focus-within:ring-2 focus-within:ring-ring has-[:disabled]:opacity-50", dragging && "border-ring bg-muted")}
@@ -216,24 +226,21 @@ export function CharacterSidebar() {
           {mode === "create" ? <form id={createFormId} className="space-y-5"
             onSubmit={(event) => { event.preventDefault(); void createCharacter(); }}>
             <label className="block space-y-2 text-[13px]">
-              <span className="font-medium">角色名称</span>
-              <Input required maxLength={256} value={draft.name} disabled={busy} placeholder="例如：晚晴"
+              <span className="font-medium">Agent 名称</span>
+              <Input required maxLength={256} value={draft.name} disabled={busy} placeholder="例如：写作助手"
                 onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
             </label>
-            <label className="block space-y-2 text-[13px]">
-              <span className="font-medium">Agent 提示词</span>
-              <Textarea required rows={10} value={draft.system_prompt} disabled={busy}
-                placeholder="描述角色的身份、性格、说话方式，以及你希望遵循的行为规则。"
-                onChange={(event) => setDraft({ ...draft, system_prompt: event.target.value })} />
-            </label>
-            <label className="block space-y-2 text-[13px]">
-              <span className="font-medium">开场白<span className="ml-2 font-normal text-muted-foreground">可选</span></span>
-              <Textarea rows={3} value={draft.first_mes} disabled={busy} placeholder="开始新聊天时显示的第一句话"
-                onChange={(event) => setDraft({ ...draft, first_mes: event.target.value })} />
-            </label>
+            <p className="text-xs leading-5 text-muted-foreground">分别设置工作规则、个性和用户资料。留空使用默认内容，创建后仍可编辑。</p>
+            {AGENT_FILES.map(([name, description]) => <label key={name} className="block space-y-2 text-[13px]">
+              <span className="font-medium">{name}</span>
+              <span className="block text-xs text-muted-foreground">{description}</span>
+              <Textarea rows={6} value={draft.files[name]} disabled={busy} placeholder={description}
+                className="font-mono text-[13px]"
+                onChange={(event) => setDraft({ ...draft, files: { ...draft.files, [name]: event.target.value } })} />
+            </label>)}
           </form> : <Button variant="outline" className="w-full rounded-full font-normal" disabled={busy}
             onClick={() => { setError(""); setPreview(null); upload.current = null; setMode("create"); }}>
-            <Plus className="mr-2 h-4 w-4" aria-hidden />创建角色
+            <Plus className="mr-2 h-4 w-4" aria-hidden />创建 Agent
           </Button>}
         </div>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
@@ -244,7 +251,7 @@ export function CharacterSidebar() {
 }
 
 function CharacterDetailsContent() {
-  const { getToken } = useClient();
+  const { client, getToken } = useClient();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<CardPreview | null>(null);
   const [error, setError] = useState("");
@@ -253,11 +260,20 @@ function CharacterDetailsContent() {
     try { setPreview(await readJson<CardPreview>("/api/characters/current", getToken())); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   }
-  return <><Button variant="ghost" size="icon" aria-label="角色设定" title="角色设定" onClick={() => void show()}>
+  return <><Button variant="ghost" size="icon" aria-label="助手设定" title="助手设定" onClick={() => void show()}>
     <BookOpen className="h-4 w-4" />
   </Button><Sheet open={open} onOpenChange={setOpen}>
-    <CharacterSheet title="角色设定" description="查看当前角色的提示词、背景、性格与开场白。">
-      {preview && <CardContent preview={preview} />}
+    <CharacterSheet title={preview?.kind === "agent" ? "Agent 设定" : "角色设定"}
+      description={preview?.kind === "agent" ? "编辑工作规则、个性和用户资料，保存后在后续消息中生效。" : "查看当前角色的提示词、背景、性格与开场白。"}>
+      {preview?.kind === "agent" ? <>
+        <p className="text-base font-medium">{preview.card.name}</p>
+        <SettingsGroup>{AGENT_FILES.map(([name, description]) => <SettingsRow key={name} title={name} description={description}>
+          <SettingsTextEditor title={name} description={description} value={preview.files?.[name] ?? ""}
+            onSave={async (content) => {
+              setPreview(await client.requestMutation<CardPreview>("agent.profile.update", { filename: name, content }));
+            }} />
+        </SettingsRow>)}</SettingsGroup>
+      </> : preview && <CardContent preview={preview} />}
       {error && <p role="alert">{error}</p>}
     </CharacterSheet>
   </Sheet></>;

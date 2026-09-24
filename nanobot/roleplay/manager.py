@@ -18,7 +18,8 @@ from nanobot.channels.qq.manifest import PLUGIN as QQ_PLUGIN
 from nanobot.config.loader import save_config
 from nanobot.config.schema import Config
 from nanobot.gateway.runtime import GatewayClientLease, GatewayInstance, GatewayRuntime
-from nanobot.roleplay.cards import MAX_UPLOAD_BYTES, CharacterCard, CharacterProfile, parse_card
+from nanobot.roleplay.agents import AgentProfile, agent_files
+from nanobot.roleplay.cards import MAX_UPLOAD_BYTES, CharacterProfile, parse_card
 from nanobot.webui.settings_services import WebUISettingsConfig
 
 PROXY_HEADER = "X-Nanobot-Character-Proxy"
@@ -61,13 +62,16 @@ class CharacterManager:
         if self._entries is None:
             self._entries = {}
             if self.root.exists():
-                for path in sorted(self.root.glob("*/card.json")):
+                for path in sorted(self.root.glob("*/config.json")):
                     if len(self._entries) >= MAX_CHARACTERS:
                         break
                     try:
                         uuid.UUID(hex=path.parent.name)
-                        card = CharacterProfile(path).card
-                        self._entries[path.parent.name] = {"id": path.parent.name, "name": card.name}
+                        card_path = path.with_name("card.json")
+                        name = (CharacterProfile(card_path).card.name if card_path.exists()
+                                else Config.model_validate_json(path.read_text()).roleplay.agent_name)
+                        if name:
+                            self._entries[path.parent.name] = {"id": path.parent.name, "name": name}
                     except (ValueError, OSError):
                         continue
         return self._entries
@@ -88,19 +92,37 @@ class CharacterManager:
 
     def details(self, role_id: str) -> dict[str, Any]:
         directory = self.directory(role_id)
-        return CharacterProfile(directory / "card.json").preview()
+        if (directory / "card.json").exists():
+            return CharacterProfile(directory / "card.json").preview()
+        return AgentProfile(Config.model_validate_json((directory / "config.json").read_text())).preview()
 
-    def create_card(self, payload: dict[str, Any]) -> dict[str, Any]:
-        card = CharacterCard.model_validate({
-            key: payload.get(key, "") for key in ("name", "system_prompt", "first_mes")
-        })
-        card.name = card.name.strip()
-        card.system_prompt = card.system_prompt.strip()
-        if not card.name or not card.system_prompt:
-            raise ValueError("请填写角色名称和 Agent 提示词")
-        # Reuse import validation, context limits, atomic storage and isolated config.
-        source = card.model_dump_json(exclude_defaults=True).encode("utf-8")
-        return self.import_card({"data": base64.b64encode(source).decode("ascii")})
+    def create_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
+        name = payload.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 256:
+            raise ValueError("请填写 1–256 字的 Agent 名称")
+        if len(self.entries()) >= MAX_CHARACTERS:
+            raise ValueError("At most 100 characters are supported")
+        files = AgentProfile.defaults(agent_files(payload.get("files", {})))
+        role_id = uuid.uuid4().hex
+        target, staging = self.root / role_id, self.root / f".import-{role_id}"
+        child = self.child_config(self.settings.load(), target)
+        child.agents.defaults.character_card = None
+        child.roleplay.agent_name = name.strip()
+        AgentProfile(child).validate(files)
+        staging.mkdir(parents=True, mode=0o700)
+        try:
+            workspace = staging / "workspace"
+            workspace.mkdir()
+            for filename, content in files.items():
+                (workspace / filename).write_text(content, encoding="utf-8")
+            save_config(child, staging / "config.json")
+            staging.rename(target)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        entry = {"id": role_id, "name": child.roleplay.agent_name}
+        self.entries()[role_id] = entry
+        return entry
 
     def import_card(self, payload: dict[str, Any]) -> dict[str, Any]:
         encoded = payload.get("data")
@@ -143,6 +165,7 @@ class CharacterManager:
         child.agents.defaults.session_ttl_minutes = 0
         child.agents.defaults.unified_session = False
         child.roleplay.auto_start = True
+        child.roleplay.agent_name = ""
         child.gateway.heartbeat.enabled = False
         for channel in (child.channels.model_extra or {}).values():
             if isinstance(channel, dict):
@@ -278,7 +301,7 @@ class CharacterManager:
     async def mutate(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         if action in {"characters.import", "characters.create"}:
             async with self._lock:
-                create = self.create_card if action == "characters.create" else self.import_card
+                create = self.create_agent if action == "characters.create" else self.import_card
                 return await asyncio.to_thread(create, payload)
         role_id = payload.get("id")
         if not isinstance(role_id, str):

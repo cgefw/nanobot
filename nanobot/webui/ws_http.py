@@ -371,6 +371,7 @@ class GatewayHTTPHandler:
         self.ingress = ingress
         self.workspaces = workspaces
         self.settings = settings
+        from nanobot.roleplay.agents import AgentProfile
         from nanobot.roleplay.cards import CharacterProfile
         from nanobot.roleplay.manager import CharacterManager
 
@@ -379,7 +380,10 @@ class GatewayHTTPHandler:
         self.character = (
             CharacterProfile(Path(card_path), profile_config.roleplay.user_name) if card_path else None
         )
-        self.characters = None if self.character else CharacterManager(settings.config)
+        self.agent_profile = (
+            AgentProfile(profile_config) if not card_path and profile_config.roleplay.agent_name else None
+        )
+        self.characters = None if self.character or self.agent_profile else CharacterManager(settings.config)
         self.skills_workspace_path = skills_workspace_path
         self.disabled_skills: set[str] = (
             disabled_skills if disabled_skills is not None else set()
@@ -496,6 +500,15 @@ class GatewayHTTPHandler:
         payload: dict[str, Any],
     ) -> Response:
         """Run one explicitly allowlisted mutation for an authenticated WebUI socket."""
+        if action == "agent.profile.update" and self.agent_profile is not None:
+            try:
+                profile = self.agent_profile
+                result = await asyncio.to_thread(
+                    self.settings.config.run_serialized, lambda _: profile.update(payload),
+                )
+                return _http_json_response(result)
+            except (ValueError, OSError) as exc:
+                return _http_error(400, str(exc))
         if action.startswith("characters.") and self.characters is not None:
             try:
                 return _http_json_response(await self.characters.mutate(action, payload))
@@ -585,6 +598,8 @@ class GatewayHTTPHandler:
                     )
                 elif self.character is not None and got == "/api/characters/current":
                     payload = self.character.preview()
+                elif self.agent_profile is not None and got == "/api/characters/current":
+                    payload = await asyncio.to_thread(self.agent_profile.preview)
                 else:
                     return _http_error(404, "Character not found")
                 return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
@@ -796,8 +811,9 @@ class GatewayHTTPHandler:
         public_ws_url = urlsplit(self._bootstrap_ws_url(request))
         scheme = "https" if public_ws_url.scheme == "wss" else "http"
         path = MCP_OAUTH_CALLBACK_PATH
-        if self.character and re.fullmatch(r"[a-f0-9]{32}", self.character.path.parent.name):
-            path = f"/_characters/{self.character.path.parent.name}{path}"
+        instance_id = self.settings.config.path.parent.name
+        if (self.character or self.agent_profile) and re.fullmatch(r"[a-f0-9]{32}", instance_id):
+            path = f"/_characters/{instance_id}{path}"
         return urlunsplit((scheme, public_ws_url.netloc, path, "", ""))
 
     # -- Session routes -----------------------------------------------------

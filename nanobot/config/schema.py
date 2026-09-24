@@ -425,6 +425,7 @@ class RoleplayConfig(Base):
 
     user_name: str = Field(default="用户", min_length=1, max_length=128)
     auto_start: bool = True  # Restore this character when QQ is enabled.
+    agent_name: str = Field(default="", max_length=256)  # Native agent, without a character card.
 
 
 class Config(BaseSettings):
