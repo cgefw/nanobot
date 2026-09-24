@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listCharacters, type Character } from "@/components/Characters";
 import { SettingsGroup, SettingsRow, SettingsSectionTitle, StatusPill } from "@/components/settings/shared/SettingsControls";
 import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { characterId, switchCharacter } from "@/lib/characters";
 import { useClient } from "@/providers/ClientProvider";
 
@@ -11,6 +12,7 @@ export function CharacterSettings() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState<Character | null>(null);
   useEffect(() => {
     // Management belongs to the main gateway; leave the role socket before stopping it.
     if (characterId()) { switchCharacter("", "/settings?section=characters"); return; }
@@ -21,11 +23,14 @@ export function CharacterSettings() {
     return () => { active = false; };
   }, [getToken]);
 
-  async function stopCharacter(id: string) {
+  async function changeCharacter(action: "stop" | "delete", id: string) {
+    if (busy) return;
     setBusy(id); setError("");
     try {
-      await client.requestMutation("characters.stop", { id }, 30_000);
-      setCharacters(await listCharacters(getToken()));
+      const result = await client.requestMutation<{ characters: Character[] }>(`characters.${action}`, { id }, 60_000);
+      setCharacters(result.characters);
+      if (action === "delete") setDeleting(null);
+      window.dispatchEvent(new Event("nanobot:characters-changed"));
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(""); }
   }
@@ -43,10 +48,30 @@ export function CharacterSettings() {
             <Button size="sm" variant="outline" className="rounded-full font-normal" disabled={!!busy}
               onClick={() => switchCharacter(role.id)}>打开</Button>
             {role.running && <Button size="sm" variant="ghost" className="rounded-full font-normal" disabled={!!busy}
-              onClick={() => void stopCharacter(role.id)}>{busy === role.id ? "停止中…" : "停止"}</Button>}
+              onClick={() => void changeCharacter("stop", role.id)}>{busy === role.id && !deleting ? "停止中…" : "停止"}</Button>}
+            <Button size="sm" variant="ghost" className="rounded-full font-normal text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={!!busy} onClick={() => { setError(""); setDeleting(role); }}>删除</Button>
           </div>
         </SettingsRow>)}
       </SettingsGroup> : !error && <p className="settings-list-inset text-[13px] text-muted-foreground">暂无角色。可从侧栏的角色下拉菜单创建角色或导入角色卡。</p>}
-    {error && <p role="alert" className="settings-list-inset text-[13px] text-destructive">{error}</p>}
+    {error && !deleting && <p role="alert" className="settings-list-inset text-[13px] text-destructive">{error}</p>}
+    <AlertDialog open={!!deleting} onOpenChange={(open) => { if (!open && !busy) setDeleting(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="break-words">删除“{deleting?.name}”？</AlertDialogTitle>
+          <AlertDialogDescription>
+            将停止该助手，并永久删除其独立目录内的配置、提示词、聊天记录、记忆和附件。此操作无法撤销。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && <p role="alert" className="break-words text-[13px] text-destructive">{error}</p>}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={!!busy}>取消</AlertDialogCancel>
+          <AlertDialogAction disabled={!!busy} className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={(event) => { event.preventDefault(); if (deleting) void changeCharacter("delete", deleting.id); }}>
+            {busy ? "删除中…" : "确认删除"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </section>;
 }

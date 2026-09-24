@@ -298,6 +298,30 @@ class CharacterManager:
         for role_id in list(self._leases):
             await self.stop(role_id, persist=False)
 
+    async def delete(self, role_id: str) -> None:
+        async with self._lock:
+            directory = self.directory(role_id)
+            if directory.is_symlink() or directory.resolve().parent != self.root.resolve():
+                raise ValueError("只能删除当前实例目录中的角色")
+            config_path = directory / "config.json"
+            if config_path.is_symlink():
+                raise ValueError("不能删除配置文件指向其他位置的角色")
+            lease = self._leases.get(role_id)
+            instance = GatewayInstance.resolve(config_path=config_path)
+            runtime = lease.runtime if lease else GatewayRuntime(paths=instance.paths)
+            # Releasing our lease alone can leave a process held by another client alive.
+            result = await asyncio.to_thread(runtime.stop)
+            if result.status.running:
+                raise ValueError("角色进程未能停止，未删除数据，请稍后重试")
+            if lease:
+                await asyncio.to_thread(lease.release)
+            self._leases.pop(role_id, None)
+            self._ports.pop(role_id, None)
+            # Only remove this instance directory; do not follow configured workspace paths.
+            if directory.exists():
+                await asyncio.to_thread(shutil.rmtree, directory)
+            self.entries().pop(role_id, None)
+
     async def mutate(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         if action in {"characters.import", "characters.create"}:
             async with self._lock:
@@ -310,6 +334,8 @@ class CharacterManager:
             await self.ensure_started(role_id)
         elif action == "characters.stop":
             await self.stop(role_id)
+        elif action == "characters.delete":
+            await self.delete(role_id)
         else:
             raise ValueError("Unknown character action")
         return self.listing()

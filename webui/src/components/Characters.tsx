@@ -116,9 +116,12 @@ export function CharacterSidebar() {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/new`);
     }
     let active = true;
-    void listCharacters(getToken()).then((items) => { if (active) setCharacters(items); })
+    const refresh = () => { void listCharacters(getToken()).then((items) => { if (active) setCharacters(items); })
       .catch(() => { /* The base chat remains usable on older gateways. */ });
-    return () => { active = false; };
+    };
+    refresh();
+    window.addEventListener("nanobot:characters-changed", refresh);
+    return () => { active = false; window.removeEventListener("nanobot:characters-changed", refresh); };
   }, [getToken]);
 
   function openSheet() {
