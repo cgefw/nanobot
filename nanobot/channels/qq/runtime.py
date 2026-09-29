@@ -28,6 +28,7 @@ import re
 import time
 from collections import deque
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, Literal, cast
 from urllib.parse import unquote, urlparse
@@ -37,7 +38,7 @@ from loguru import logger
 from pydantic import Field
 
 from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ContextCompactionEvent
+from nanobot.bus.outbound_events import ContextCompactionEvent, ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Base
@@ -185,6 +186,10 @@ class QQConfig(Base):
     allow_from: list[str] = Field(default_factory=list)
     msg_format: Literal["plain", "markdown"] = "plain"
     ack_message: str = "⏳ Processing..."
+    ack_enabled: bool = True
+    streaming: bool = True
+    send_progress: bool = False
+    send_tool_hints: bool = False
 
     # Optional: directory to save inbound attachments. If empty, use nanobot get_media_dir("qq").
     media_dir: str = ""
@@ -197,6 +202,18 @@ class QQConfig(Base):
     # notices would land as separate permanent messages (#5784). Off by default;
     # set showCompactionNotices: true to post them anyway.
     show_compaction_notices: bool = False
+
+
+@dataclass
+class _QQStream:
+    parts: list[str] = field(default_factory=list)
+    sent: int = 0
+    remote_id: str = ""
+    index: int = 0
+    seq: int = 0
+    last_sent: float = 0
+    fallback: bool = False
+    finalizing: bool = False
 
 
 class QQChannel(BaseChannel):
@@ -221,8 +238,14 @@ class QQChannel(BaseChannel):
         self._processed_ids: deque[str] = deque(maxlen=1000)
         self._msg_seq: int = 1  # used to avoid QQ API dedup
         self._chat_type_cache: dict[str, str] = {}
+        self._streams: dict[tuple[str, str], _QQStream] = {}
+        self.send_progress = config.send_progress
+        self.send_tool_hints = config.send_tool_hints
 
         self._media_root: Path = self._init_media_root()
+
+    def progress_transport_defaults(self) -> tuple[bool, bool]:
+        return False, False
 
     # ---------------------------
     # Lifecycle
@@ -286,6 +309,7 @@ class QQChannel(BaseChannel):
     async def stop(self) -> None:
         """Stop bot and cleanup resources."""
         self._running = False
+        self._streams.clear()
         if self._client:
             with suppress(Exception):
                 await self._client.close()
@@ -304,6 +328,11 @@ class QQChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send attachments first, then text."""
+        if isinstance(msg.event, ProgressEvent):
+            event = msg.event
+            if (event.reasoning or event.reasoning_delta or event.reasoning_end
+                    or not (self.send_tool_hints if event.tool_hint else self.send_progress)):
+                return
         # Compaction notices assume the channel can update one message in place
         # (Telegram/Discord edit their notice; WebSocket projects it as status).
         # QQ's C2C/group API has no edit or recall endpoint, so by default the
@@ -386,6 +415,64 @@ class QQChannel(BaseChannel):
             await self._client.api.post_group_message(group_openid=chat_id, **payload)
         else:
             await self._client.api.post_c2c_message(openid=chat_id, **payload)
+
+    async def send_delta(
+        self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None, *,
+        stream_id: str | None = None, stream_end: bool = False,
+        resuming: bool = False, merge_next: bool = False,
+    ) -> None:
+        """Append answer text through QQ's C2C stream API; groups send one final answer."""
+        if not self._client:
+            raise RuntimeError("QQ client not initialized")
+        msg_id = (metadata or {}).get("message_id")
+        key = (chat_id, stream_id or str(msg_id or ""))
+        state = self._streams.get(key)
+        if state is None:
+            if not delta:
+                return
+            self._msg_seq += 1
+            state = self._streams[key] = _QQStream(seq=self._msg_seq)
+        # A failed final delivery is retried by ChannelManager with the same delta.
+        if delta and not state.finalizing:
+            state.parts.append(delta)
+        final = stream_end and not merge_next
+        state.finalizing = final
+        if not final and state.sent == len(state.parts):
+            return
+        is_group = self._chat_type_cache.get(chat_id) == "group"
+        fallback = is_group or not self.config.streaming or not msg_id or state.fallback
+        if not fallback and (final or time.monotonic() - state.last_sent >= 0.5):
+            payload: dict[str, Any] = {
+                "input_mode": "append", "input_state": 10 if final else 1,
+                "index": state.index, "msg_seq": state.seq, "msg_id": msg_id,
+                "content_type": "markdown" if self.config.msg_format == "markdown" else "text",
+                "content_raw": "".join(state.parts[state.sent:]),
+            }
+            if state.remote_id:
+                payload["stream_msg_id"] = state.remote_id
+            try:
+                route = cast(Any, Route)("POST", "/v2/users/{openid}/stream_messages", openid=chat_id)
+                response: object = await self._client.api._http.request(route, json=payload)
+                # SDK responses are JSON objects; validate the one field we consume.
+                result = cast(dict[str, object], response) if isinstance(response, dict) else {}
+                remote_id = result.get("id")
+                if not isinstance(remote_id, str) or not remote_id:
+                    raise ValueError("QQ stream response has no message id")
+                state.remote_id = remote_id
+                state.index += 1
+                state.sent = len(state.parts)
+                state.last_sent = time.monotonic()
+            except Exception as exc:
+                # Keep the complete answer for a one-shot fallback if streaming is unavailable.
+                # Do not expose SDK exception payloads (which may include credentials).
+                self.logger.warning("QQ streaming unavailable ({}); falling back to final answer", type(exc).__name__)
+                state.fallback = fallback = True
+        if final:
+            if fallback:
+                content = "".join(state.parts).strip()
+                if content:
+                    await self._send_text_only(chat_id, is_group, msg_id, content)
+            self._streams.pop(key, None)
 
     async def _send_media(
         self,
@@ -610,7 +697,7 @@ class QQChannel(BaseChannel):
             if not content and not media_paths:
                 return
 
-            if self.config.ack_message:
+            if self.config.ack_enabled and self.config.ack_message:
                 try:
                     await self._send_text_only(
                         chat_id=chat_id,

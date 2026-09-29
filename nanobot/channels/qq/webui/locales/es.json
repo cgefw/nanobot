@@ -40,6 +40,34 @@
           "true": "Activado",
           "false": "Desactivado"
         }
+      },
+      "ackEnabled": {
+        "label": "Enviar confirmación",
+        "choices": {
+          "true": "Activado",
+          "false": "Desactivado"
+        }
+      },
+      "streaming": {
+        "label": "Respuestas privadas en tiempo real",
+        "choices": {
+          "true": "Activado",
+          "false": "Desactivado"
+        }
+      },
+      "sendProgress": {
+        "label": "Mostrar progreso",
+        "choices": {
+          "true": "Activado",
+          "false": "Desactivado"
+        }
+      },
+      "sendToolHints": {
+        "label": "Mostrar llamadas a herramientas",
+        "choices": {
+          "true": "Activado",
+          "false": "Desactivado"
+        }
       }
     }
   }

@@ -40,6 +40,34 @@
           "true": "Bật",
           "false": "Tắt"
         }
+      },
+      "ackEnabled": {
+        "label": "Gửi xác nhận",
+        "choices": {
+          "true": "Bật",
+          "false": "Tắt"
+        }
+      },
+      "streaming": {
+        "label": "Trả lời riêng theo luồng",
+        "choices": {
+          "true": "Bật",
+          "false": "Tắt"
+        }
+      },
+      "sendProgress": {
+        "label": "Hiện tiến trình",
+        "choices": {
+          "true": "Bật",
+          "false": "Tắt"
+        }
+      },
+      "sendToolHints": {
+        "label": "Hiện lệnh gọi công cụ",
+        "choices": {
+          "true": "Bật",
+          "false": "Tắt"
+        }
       }
     }
   }

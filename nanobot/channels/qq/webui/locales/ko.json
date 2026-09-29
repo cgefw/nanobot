@@ -40,6 +40,34 @@
           "true": "켜기",
           "false": "끄기"
         }
+      },
+      "ackEnabled": {
+        "label": "수신 확인 보내기",
+        "choices": {
+          "true": "켜기",
+          "false": "끄기"
+        }
+      },
+      "streaming": {
+        "label": "개인 대화 스트리밍",
+        "choices": {
+          "true": "켜기",
+          "false": "끄기"
+        }
+      },
+      "sendProgress": {
+        "label": "진행 메시지 표시",
+        "choices": {
+          "true": "켜기",
+          "false": "끄기"
+        }
+      },
+      "sendToolHints": {
+        "label": "도구 호출 표시",
+        "choices": {
+          "true": "켜기",
+          "false": "끄기"
+        }
       }
     }
   }

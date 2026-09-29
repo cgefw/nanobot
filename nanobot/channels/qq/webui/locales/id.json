@@ -40,6 +40,34 @@
           "true": "Aktif",
           "false": "Nonaktif"
         }
+      },
+      "ackEnabled": {
+        "label": "Kirim konfirmasi",
+        "choices": {
+          "true": "Aktif",
+          "false": "Nonaktif"
+        }
+      },
+      "streaming": {
+        "label": "Streaming balasan pribadi",
+        "choices": {
+          "true": "Aktif",
+          "false": "Nonaktif"
+        }
+      },
+      "sendProgress": {
+        "label": "Tampilkan progres",
+        "choices": {
+          "true": "Aktif",
+          "false": "Nonaktif"
+        }
+      },
+      "sendToolHints": {
+        "label": "Tampilkan panggilan alat",
+        "choices": {
+          "true": "Aktif",
+          "false": "Nonaktif"
+        }
       }
     }
   }

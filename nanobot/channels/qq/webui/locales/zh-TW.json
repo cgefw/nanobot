@@ -40,6 +40,34 @@
           "true": "開",
           "false": "關"
         }
+      },
+      "ackEnabled": {
+        "label": "傳送確認訊息（Ack）",
+        "choices": {
+          "true": "開",
+          "false": "關"
+        }
+      },
+      "streaming": {
+        "label": "私聊串流回覆",
+        "choices": {
+          "true": "開",
+          "false": "關"
+        }
+      },
+      "sendProgress": {
+        "label": "顯示進度訊息",
+        "choices": {
+          "true": "開",
+          "false": "關"
+        }
+      },
+      "sendToolHints": {
+        "label": "顯示工具呼叫",
+        "choices": {
+          "true": "開",
+          "false": "關"
+        }
       }
     }
   }

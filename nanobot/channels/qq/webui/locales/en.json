@@ -40,6 +40,34 @@
           "true": "On",
           "false": "Off"
         }
+      },
+      "ackEnabled": {
+        "label": "Send acknowledgement",
+        "choices": {
+          "true": "On",
+          "false": "Off"
+        }
+      },
+      "streaming": {
+        "label": "Stream private replies",
+        "choices": {
+          "true": "On",
+          "false": "Off"
+        }
+      },
+      "sendProgress": {
+        "label": "Show progress messages",
+        "choices": {
+          "true": "On",
+          "false": "Off"
+        }
+      },
+      "sendToolHints": {
+        "label": "Show tool calls",
+        "choices": {
+          "true": "On",
+          "false": "Off"
+        }
       }
     }
   }

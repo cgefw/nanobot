@@ -40,6 +40,34 @@
           "true": "オン",
           "false": "オフ"
         }
+      },
+      "ackEnabled": {
+        "label": "受付メッセージを送信",
+        "choices": {
+          "true": "オン",
+          "false": "オフ"
+        }
+      },
+      "streaming": {
+        "label": "個人チャットのストリーミング",
+        "choices": {
+          "true": "オン",
+          "false": "オフ"
+        }
+      },
+      "sendProgress": {
+        "label": "進捗メッセージを表示",
+        "choices": {
+          "true": "オン",
+          "false": "オフ"
+        }
+      },
+      "sendToolHints": {
+        "label": "ツール呼び出しを表示",
+        "choices": {
+          "true": "オン",
+          "false": "オフ"
+        }
       }
     }
   }

@@ -132,25 +132,45 @@ class CharacterManager:
         if not isinstance(filename, str):
             raise ValueError("Invalid filename")
         imported = parse_card(base64.b64decode(encoded, validate=True), filename)
+        existing_id = payload.get("id")
+        if existing_id is not None and not isinstance(existing_id, str):
+            raise ValueError("Invalid character id")
+        target = self.directory(existing_id) if isinstance(existing_id, str) else None
+        if target is not None and (
+            target.is_symlink() or target.resolve().parent != self.root.resolve()
+            or not (target / "card.json").is_file()
+            or any((target / name).is_symlink() for name in ("card.json", "avatar.png", "config.json"))
+        ):
+            raise ValueError("Only an existing character card in this instance can be updated")
         if payload.get("preview", False):
             return imported.preview()
-        if len(self.entries()) >= MAX_CHARACTERS:
+        if target is None and len(self.entries()) >= MAX_CHARACTERS:
             raise ValueError("At most 100 characters are supported")
-        role_id = uuid.uuid4().hex
-        target = self.root / role_id
-        staging = self.root / f".import-{role_id}"
+        role_id = existing_id if isinstance(existing_id, str) else uuid.uuid4().hex
+        updating = target is not None
+        target = target or self.root / role_id
+        staging = self.root / f".import-{uuid.uuid4().hex}"
         staging.mkdir(parents=True, mode=0o700)
         try:
             (staging / "card.json").write_bytes(imported.source)
             if imported.avatar:
                 (staging / "avatar.png").write_bytes(imported.avatar)
             # Validate the fixed definition before it can consume an entire model context.
-            parent = self.settings.load()
+            parent = (WebUISettingsConfig(target / "config.json").load()
+                      if updating else self.settings.load())
             budget = max(512, parent.resolve_preset().context_window_tokens // 4)
             CharacterProfile(staging / "card.json", parent.roleplay.user_name).bounded_identity(budget)
-            child = self.child_config(parent, target)
-            save_config(child, staging / "config.json")
-            staging.rename(target)
+            if updating:
+                # The running profile reloads card.json by mtime. Leave config,
+                # workspace, sessions, and memory intact; JSON updates keep the avatar.
+                if imported.avatar:
+                    (staging / "avatar.png").replace(target / "avatar.png")
+                (staging / "card.json").replace(target / "card.json")
+                staging.rmdir()
+            else:
+                child = self.child_config(parent, target)
+                save_config(child, staging / "config.json")
+                staging.rename(target)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -323,7 +343,9 @@ class CharacterManager:
             self.entries().pop(role_id, None)
 
     async def mutate(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if action in {"characters.import", "characters.create"}:
+        if action in {"characters.import", "characters.create", "characters.update"}:
+            if action == "characters.update" and not isinstance(payload.get("id"), str):
+                raise ValueError("Character id is required")
             async with self._lock:
                 create = self.create_agent if action == "characters.create" else self.import_card
                 return await asyncio.to_thread(create, payload)

@@ -1,4 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "@/i18n";
 import { BookOpen, Check, ChevronDown, Plus, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,9 +18,9 @@ import { cn } from "@/lib/utils";
 
 export type Character = { id: string; name: string; running: boolean };
 const AGENT_FILES = [
-  ["AGENTS.md", "工作规则、行为指令和任务处理方式"],
-  ["SOUL.md", "身份、性格、语气和表达风格"],
-  ["USER.md", "用户资料、偏好和沟通习惯"],
+  ["AGENTS.md", "characters.agentRules"],
+  ["SOUL.md", "characters.agentSoul"],
+  ["USER.md", "characters.agentUser"],
 ] as const;
 const EMPTY_AGENT = { name: "", files: { "AGENTS.md": "", "SOUL.md": "", "USER.md": "" } };
 const CharacterMarkdown = lazy(() => import("@/components/MarkdownTextRenderer"));
@@ -35,14 +37,16 @@ type CardPreview = {
 
 async function readJson<T>(url: string, token: string): Promise<T> {
   const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`请求失败 (${res.status})`);
+  if (!res.ok) throw new Error(i18n.t("characters.requestError", { status: res.status }));
   return res.json() as Promise<T>;
 }
 
 let parentCredentials: ReturnType<typeof fetchBootstrap> | undefined;
 export async function listCharacters(token: string): Promise<Character[]> {
   if (characterId()) {
-    parentCredentials ??= fetchBootstrap(window.location.origin, loadSavedSecret());
+    // Share concurrent lookups, but never retain failed or expired parent tokens.
+    parentCredentials ??= fetchBootstrap(window.location.origin, loadSavedSecret())
+      .finally(() => { parentCredentials = undefined; });
     token = (await parentCredentials).api_token ?? "";
   }
   const result = await readJson<{ characters: Character[] }>(
@@ -52,22 +56,23 @@ export async function listCharacters(token: string): Promise<Character[]> {
 }
 
 function CardContent({ preview }: { preview: CardPreview }) {
+  const { t } = useTranslation();
   return <div className="min-w-0 space-y-4 text-[13px] leading-6">
     {preview.avatar && <img src={`data:image/png;base64,${preview.avatar}`} alt={preview.card.name}
       className="h-32 w-32 rounded-control object-cover" />}
     <p className="text-base font-medium">{preview.card.name}</p>
-    {[["Agent 提示词", preview.card.system_prompt], ["角色描述", preview.card.description], ["性格", preview.card.personality],
-      ["场景", preview.card.scenario], ["开场白", preview.card.first_mes],
-      ["对话示例", preview.card.mes_example], ["作者说明", preview.card.creator_notes],
+    {[[t("characters.systemPrompt"), preview.card.system_prompt], [t("characters.description"), preview.card.description], [t("characters.personality"), preview.card.personality],
+      [t("characters.scenario"), preview.card.scenario], [t("characters.greeting"), preview.card.first_mes],
+      [t("characters.examples"), preview.card.mes_example], [t("characters.notes"), preview.card.creator_notes],
     ].map(([label, content]) => content && <div key={label}>
       <p className="mb-1 font-medium text-muted-foreground">{label}</p>
       <p className="whitespace-pre-wrap break-words">{content}</p>
     </div>)}
     {!!preview.card.alternate_greetings?.length && <p className="text-muted-foreground">
-      包含 {preview.card.alternate_greetings.length} 条备选开场白
+      {t("characters.alternates", { count: preview.card.alternate_greetings.length })}
     </p>}
     {preview.card.character_book && <p className="text-muted-foreground">
-      世界书：{preview.card.character_book.entries.length} 条
+      {t("characters.lore", { count: preview.card.character_book.entries.length })}
     </p>}
     {preview.warnings?.map((warning) => <p key={warning} className="text-amber-700 dark:text-amber-300">{warning}</p>)}
   </div>;
@@ -98,10 +103,16 @@ function CharacterSheet({ title, description, children, footer }: {
 }
 
 export function CharacterSidebar() {
+  const { t } = useTranslation();
   const { client, getToken } = useClient();
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [listRevision, setListRevision] = useState(0);
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState("");
+  const [updateId, setUpdateId] = useState(() =>
+    new URLSearchParams(window.location.hash.split("?")[1]).get("updateCharacter") ?? "");
   const [mode, setMode] = useState<"import" | "create" | null>(() =>
-    /^#\/new\?(import|create)Character=1$/.test(window.location.hash) ? "import" : null);
+    updateId || /^#\/new\?(import|create)Character=1$/.test(window.location.hash) ? "import" : null);
   const [draft, setDraft] = useState(EMPTY_AGENT);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -112,22 +123,25 @@ export function CharacterSidebar() {
   const createFormId = useId();
   const current = characterId();
   useEffect(() => {
-    if (/^#\/new\?(import|create)Character=1$/.test(window.location.hash)) {
+    if (/^#\/new\?(?:(import|create)Character=1|updateCharacter=[a-f0-9]{32})$/.test(window.location.hash)) {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/new`);
     }
     let active = true;
-    const refresh = () => { void listCharacters(getToken()).then((items) => { if (active) setCharacters(items); })
-      .catch(() => { /* The base chat remains usable on older gateways. */ });
+    const refresh = () => {
+      setListLoading(true); setListError("");
+      void listCharacters(getToken()).then((items) => { if (active) setCharacters(items); })
+        .catch((err: unknown) => { if (active) setListError(err instanceof Error ? err.message : String(err)); })
+        .finally(() => { if (active) setListLoading(false); });
     };
     refresh();
     window.addEventListener("nanobot:characters-changed", refresh);
     return () => { active = false; window.removeEventListener("nanobot:characters-changed", refresh); };
-  }, [getToken]);
+  }, [getToken, updateId, listRevision]);
 
   function openSheet() {
     if (busy) return;
     if (current) { switchCharacter("", "/new?createCharacter=1"); return; }
-    setError(""); setMode("import");
+    setUpdateId(""); setError(""); setMode("import");
   }
 
   async function createCharacter() {
@@ -144,18 +158,20 @@ export function CharacterSidebar() {
   async function chooseFile(file?: File) {
     if (!file || busy) return;
     setMode("import"); setError(""); setPreview(null); upload.current = null;
-    if (!/\.(json|png)$/i.test(file.name)) { setError("请选择 JSON 或 PNG 角色卡"); return; }
-    if (file.size > 8 * 1024 * 1024) { setError("角色卡不能超过 8 MiB"); return; }
+    if (!/\.(json|png)$/i.test(file.name)) { setError(t("characters.invalidFile")); return; }
+    if (file.size > 8 * 1024 * 1024) { setError(t("characters.fileTooLarge")); return; }
     setBusy(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("无法读取文件"));
+        reader.onerror = () => reject(new Error(t("characters.readError")));
         reader.readAsDataURL(file);
       });
       const payload = { filename: file.name, data: dataUrl.split(",")[1] };
-      const result = await client.requestMutation<CardPreview>("characters.import", { ...payload, preview: true });
+      const result = await client.requestMutation<CardPreview>(updateId ? "characters.update" : "characters.import", {
+        ...payload, ...(updateId ? { id: updateId } : {}), preview: true,
+      });
       upload.current = payload; setPreview(result);
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
@@ -165,24 +181,32 @@ export function CharacterSidebar() {
     if (!upload.current) return;
     setBusy(true); setError("");
     try {
-      await client.requestMutation("characters.import", upload.current);
+      await client.requestMutation(updateId ? "characters.update" : "characters.import", {
+        ...upload.current, ...(updateId ? { id: updateId } : {}),
+      });
       setCharacters(await listCharacters(getToken()));
       setPreview(null); upload.current = null;
+      if (updateId) switchCharacter(updateId);
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
   }
 
   return <div className="space-y-1 px-2 pb-2">
-    <label className="block px-2 py-1 text-xs text-muted-foreground" htmlFor={pickerId}>当前角色</label>
-    <DropdownMenu modal={false}>
+    <label className="block px-2 py-1 text-xs text-muted-foreground" htmlFor={pickerId}>{t("characters.current")}</label>
+    <DropdownMenu modal={false} onOpenChange={(open) => { if (open) setListRevision((value) => value + 1); }}>
       <DropdownMenuTrigger asChild>
-        <Button id={pickerId} variant="outline" aria-label="当前角色" className="h-9 w-full justify-between rounded-full px-3 text-[13px] font-normal shadow-none settings-hover">
-          <span className="truncate">{current ? characters.find((role) => role.id === current)?.name ?? "载入角色…" : "默认助手"}</span>
+        <Button id={pickerId} variant="outline" aria-label={t("characters.current")} className="h-9 w-full justify-between rounded-full px-3 text-[13px] font-normal shadow-none settings-hover">
+          <span className="truncate">{current ? characters.find((role) => role.id === current)?.name ?? t("characters.loading") : t("characters.default")}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
-        {[{ id: "", name: "默认助手" }, ...characters].map((role) => <DropdownMenuItem key={role.id}
+        {listLoading && <DropdownMenuItem disabled>{t("characters.loading")}</DropdownMenuItem>}
+        {listError && <DropdownMenuItem className="whitespace-normal text-destructive" title={listError}
+          onSelect={(event) => { event.preventDefault(); setListRevision((value) => value + 1); }}>
+          {t("characters.retryList")}
+        </DropdownMenuItem>}
+        {[{ id: "", name: t("characters.default") }, ...characters].map((role) => <DropdownMenuItem key={role.id}
           role="menuitemradio" aria-checked={current === role.id}
           className={current === role.id ? "bg-muted" : undefined}
           onSelect={() => { if (current !== role.id) switchCharacter(role.id); }}>
@@ -191,16 +215,18 @@ export function CharacterSidebar() {
         </DropdownMenuItem>)}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={openSheet}>
-          <Plus aria-hidden />创建角色
+          <Plus aria-hidden />{t("characters.create")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
     <Sheet open={mode !== null} onOpenChange={(open) => { if (!open && !busy) setMode(null); }}>
-      <CharacterSheet title="创建角色" description="导入 JSON / PNG 角色卡，或在下方通过 Markdown 提示词文件创建 Agent。"
+      <CharacterSheet title={updateId ? t("characters.update") : t("characters.create")} description={updateId
+        ? t("characters.updateHelp")
+        : t("characters.createHelp")}
         footer={mode === "create"
           ? <Button type="submit" form={createFormId} className="h-9 w-full rounded-full sm:w-auto"
-            disabled={busy || !draft.name.trim()}>创建并打开</Button>
-          : preview && <Button className="h-9 w-full rounded-full sm:w-auto" disabled={busy} onClick={() => void importCard()}>确认导入</Button>}
+            disabled={busy || !draft.name.trim()}>{t("characters.createOpen")}</Button>
+          : preview && <Button className="h-9 w-full rounded-full sm:w-auto" disabled={busy} onClick={() => void importCard()}>{updateId ? t("characters.confirmUpdate") : t("characters.confirmImport")}</Button>}
       >
         <label className={cn("flex min-h-24 cursor-pointer items-center justify-center gap-2 rounded-control border border-dashed border-border px-4 py-5 text-[13px] settings-hover focus-within:ring-2 focus-within:ring-ring has-[:disabled]:opacity-50", dragging && "border-ring bg-muted")}
           onDragOver={(event) => {
@@ -215,45 +241,46 @@ export function CharacterSidebar() {
             event.preventDefault(); event.stopPropagation(); setDragging(false);
             if (busy) return;
             if (event.dataTransfer.files.length > 1) {
-              setError("每次只能导入一张角色卡"); setPreview(null); upload.current = null; return;
+              setError(t("characters.oneFile")); setPreview(null); upload.current = null; return;
             }
             void chooseFile(event.dataTransfer.files[0]);
           }}>
-          <Upload className="h-4 w-4 shrink-0" /><span>点击选择或拖入 JSON / PNG 角色卡</span>
-          <input aria-label="导入角色卡" type="file" accept=".json,.png" className="sr-only" disabled={busy}
+          <Upload className="h-4 w-4 shrink-0" /><span>{t("characters.drop")}</span>
+          <input aria-label={t("characters.import")} type="file" accept=".json,.png" className="sr-only" disabled={busy}
             onChange={(event) => { void chooseFile(event.target.files?.[0]); event.target.value = ""; }} />
         </label>
-        <p className="text-xs leading-5 text-muted-foreground">支持 V1 / V2、V3 和 AICC 基础字段，世界书支持关键词匹配；不执行角色卡脚本。</p>
+        <p className="text-xs leading-5 text-muted-foreground">{t("characters.support")}</p>
         {preview && <CardContent preview={preview} />}
-        <div className="border-t border-border/45 pt-5">
+        {!updateId && <div className="border-t border-border/45 pt-5">
           {mode === "create" ? <form id={createFormId} className="space-y-5"
             onSubmit={(event) => { event.preventDefault(); void createCharacter(); }}>
             <label className="block space-y-2 text-[13px]">
-              <span className="font-medium">Agent 名称</span>
-              <Input required maxLength={256} value={draft.name} disabled={busy} placeholder="例如：写作助手"
+              <span className="font-medium">{t("characters.agentName")}</span>
+              <Input required maxLength={256} value={draft.name} disabled={busy} placeholder={t("characters.agentPlaceholder")}
                 onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
             </label>
-            <p className="text-xs leading-5 text-muted-foreground">分别设置工作规则、个性和用户资料。留空使用默认内容，创建后仍可编辑。</p>
+            <p className="text-xs leading-5 text-muted-foreground">{t("characters.agentHelp")}</p>
             {AGENT_FILES.map(([name, description]) => <label key={name} className="block space-y-2 text-[13px]">
               <span className="font-medium">{name}</span>
-              <span className="block text-xs text-muted-foreground">{description}</span>
-              <Textarea rows={6} value={draft.files[name]} disabled={busy} placeholder={description}
+              <span className="block text-xs text-muted-foreground">{t(description)}</span>
+              <Textarea rows={6} value={draft.files[name]} disabled={busy} placeholder={t(description)}
                 className="font-mono text-[13px]"
                 onChange={(event) => setDraft({ ...draft, files: { ...draft.files, [name]: event.target.value } })} />
             </label>)}
           </form> : <Button variant="outline" className="w-full rounded-full font-normal" disabled={busy}
             onClick={() => { setError(""); setPreview(null); upload.current = null; setMode("create"); }}>
-            <Plus className="mr-2 h-4 w-4" aria-hidden />创建 Agent
+            <Plus className="mr-2 h-4 w-4" aria-hidden />{t("characters.createAgent")}
           </Button>}
-        </div>
+        </div>}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        {busy && <p role="status" className="text-sm text-muted-foreground">处理中…</p>}
+        {busy && <p role="status" className="text-sm text-muted-foreground">{t("characters.busy")}</p>}
       </CharacterSheet>
     </Sheet>
   </div>;
 }
 
 function CharacterDetailsContent() {
+  const { t } = useTranslation();
   const { client, getToken } = useClient();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<CardPreview | null>(null);
@@ -263,20 +290,26 @@ function CharacterDetailsContent() {
     try { setPreview(await readJson<CardPreview>("/api/characters/current", getToken())); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   }
-  return <><Button variant="ghost" size="icon" aria-label="助手设定" title="助手设定" onClick={() => void show()}>
+  return <><Button variant="ghost" size="icon" aria-label={t("characters.profile")} title={t("characters.profile")} onClick={() => void show()}>
     <BookOpen className="h-4 w-4" />
   </Button><Sheet open={open} onOpenChange={setOpen}>
-    <CharacterSheet title={preview?.kind === "agent" ? "Agent 设定" : "角色设定"}
-      description={preview?.kind === "agent" ? "编辑工作规则、个性和用户资料，保存后在后续消息中生效。" : "查看当前角色的提示词、背景、性格与开场白。"}>
+    <CharacterSheet title={preview?.kind === "agent" ? t("characters.agentProfile") : t("characters.cardProfile")}
+      description={preview?.kind === "agent" ? t("characters.agentProfileHelp") : t("characters.cardProfileHelp")}>
       {preview?.kind === "agent" ? <>
         <p className="text-base font-medium">{preview.card.name}</p>
-        <SettingsGroup>{AGENT_FILES.map(([name, description]) => <SettingsRow key={name} title={name} description={description}>
-          <SettingsTextEditor title={name} description={description} value={preview.files?.[name] ?? ""}
+        <SettingsGroup>{AGENT_FILES.map(([name, description]) => <SettingsRow key={name} title={name} description={t(description)}>
+          <SettingsTextEditor title={name} description={t(description)} value={preview.files?.[name] ?? ""}
             onSave={async (content) => {
               setPreview(await client.requestMutation<CardPreview>("agent.profile.update", { filename: name, content }));
             }} />
         </SettingsRow>)}</SettingsGroup>
-      </> : preview && <CardContent preview={preview} />}
+      </> : preview && <>
+        <CardContent preview={preview} />
+        <Button variant="outline" className="w-full rounded-full font-normal"
+          onClick={() => switchCharacter("", `/new?updateCharacter=${characterId()}`)}>
+          <Upload className="mr-2 h-4 w-4" aria-hidden />{t("characters.update")}
+        </Button>
+      </>}
       {error && <p role="alert">{error}</p>}
     </CharacterSheet>
   </Sheet></>;
@@ -287,6 +320,7 @@ export function CharacterDetails() {
 }
 
 export function CharacterWelcome() {
+  const { t } = useTranslation();
   const { getToken } = useClient();
   const [preview, setPreview] = useState<CardPreview | null>(null);
   const [index, setIndex] = useState(selectedGreeting);
@@ -299,7 +333,7 @@ export function CharacterWelcome() {
   return <div className="max-w-xl space-y-4 p-4 text-left">
     {preview?.avatar && <img src={`data:image/png;base64,${preview.avatar}`} alt=""
       className="h-16 w-16 rounded-full object-cover" />}
-    <h2 className="text-xl font-medium">{preview?.card.name ?? "载入角色…"}</h2>
+    <h2 className="text-xl font-medium">{preview?.card.name ?? t("characters.loading")}</h2>
     <div className="break-words text-sm leading-7">
       <Suspense fallback={<p className="whitespace-pre-wrap">{preview?.greetings?.[index] ?? preview?.greetings?.[0]}</p>}>
         <CharacterMarkdown>{preview?.greetings?.[index] ?? preview?.greetings?.[0] ?? ""}</CharacterMarkdown>
@@ -307,9 +341,9 @@ export function CharacterWelcome() {
     </div>
     {(preview?.greetings?.length ?? 0) > 1 && <Select value={String(index)}
       onValueChange={(value) => { const next = Number(value); setIndex(next); selectGreeting(next); }}>
-      <SelectTrigger aria-label="选择开场白" className="w-fit rounded-full font-normal shadow-none settings-hover"><SelectValue /></SelectTrigger>
+      <SelectTrigger aria-label={t("characters.chooseGreeting")} className="w-fit rounded-full font-normal shadow-none settings-hover"><SelectValue /></SelectTrigger>
       <SelectContent>
-        {preview?.greetings?.map((_, i) => <SelectItem key={i} value={String(i)}>开场白 {i + 1}</SelectItem>)}
+        {preview?.greetings?.map((_, i) => <SelectItem key={i} value={String(i)}>{t("characters.greetingNumber", { number: i + 1 })}</SelectItem>)}
       </SelectContent>
     </Select>}
   </div>;

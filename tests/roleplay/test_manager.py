@@ -2,12 +2,15 @@
 
 import asyncio
 import base64
+import io
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from PIL import Image, PngImagePlugin
 
+from nanobot.roleplay.cards import CharacterProfile
 from nanobot.roleplay.manager import CharacterManager
 from nanobot.webui.settings_services import WebUISettingsConfig
 
@@ -15,6 +18,69 @@ from nanobot.webui.settings_services import WebUISettingsConfig
 @pytest.fixture
 def manager(tmp_path):
     return CharacterManager(WebUISettingsConfig(tmp_path / "config.json"))
+
+
+async def test_update_card_preserves_instance_and_reloads_cached_profile(manager):
+    role_id = manager.import_card({"data": base64.b64encode(b'{"name":"Before"}').decode()})["id"]
+    directory = manager.directory(role_id)
+    history = directory / "workspace" / "sessions" / "chat.jsonl"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    history.write_text("existing conversation")
+    memory = directory / "workspace" / "MEMORY.md"
+    memory.write_text("existing memory")
+    (directory / "avatar.png").write_bytes(b"existing avatar")
+    before = (directory / "config.json").read_bytes()
+    profile = CharacterProfile(directory / "card.json")
+    assert profile.card.name == "Before"
+    payload = {"id": role_id, "data": base64.b64encode(b'{"name":"After","first_mes":"Hi"}').decode()}
+    preview = await manager.mutate("characters.update", {**payload, "preview": True})
+    assert preview["card"]["name"] == "After"
+    assert profile.card.name == "Before"
+    await manager.mutate("characters.update", payload)
+    assert profile.card.name == "After"
+    assert profile.greetings() == ["Hi"]
+    assert len(manager.entries()) == 1
+    assert manager.entries()[role_id]["name"] == "After"
+    assert history.read_text() == "existing conversation"
+    assert memory.read_text() == "existing memory"
+    assert (directory / "config.json").read_bytes() == before
+    assert (directory / "avatar.png").read_bytes() == b"existing avatar"
+
+
+async def test_update_png_replaces_avatar_in_the_same_instance(manager):
+    role_id = manager.import_card({"data": base64.b64encode(b'{"name":"Before"}').decode()})["id"]
+    directory = manager.directory(role_id)
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("chara", base64.b64encode(b'{"name":"After"}').decode())
+    raw = io.BytesIO()
+    Image.new("RGB", (32, 24), "red").save(raw, "PNG", pnginfo=metadata)
+    await manager.mutate("characters.update", {
+        "id": role_id, "filename": "update.png", "data": base64.b64encode(raw.getvalue()).decode(),
+    })
+    assert CharacterProfile(directory / "card.json").card.name == "After"
+    with Image.open(directory / "avatar.png") as avatar:
+        assert avatar.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+        assert "chara" not in avatar.info
+    assert not list(manager.root.glob(".import-*"))
+
+
+@pytest.mark.parametrize("role_id", [None, "../escape", 12])
+async def test_update_requires_an_existing_card(manager, role_id):
+    with pytest.raises(ValueError):
+        await manager.mutate("characters.update", {"id": role_id, "data": base64.b64encode(b'{"name":"Bad"}').decode()})
+    assert not manager.entries()
+
+
+async def test_update_rejects_agent_and_invalid_card_without_changing_files(manager):
+    agent = manager.create_agent({"name": "Native"})
+    with pytest.raises(ValueError):
+        await manager.mutate("characters.update", {"id": agent["id"], "data": base64.b64encode(b'{"name":"Bad"}').decode()})
+    role = manager.import_card({"data": base64.b64encode(b'{"name":"Good"}').decode()})
+    path = manager.directory(role["id"]) / "card.json"
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        await manager.mutate("characters.update", {"id": role["id"], "data": base64.b64encode(b'{"name":""}').decode()})
+    assert path.read_bytes() == before
 
 
 @pytest.fixture

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { listCharacters, type Character } from "@/components/Characters";
 import { SettingsGroup, SettingsRow, SettingsSectionTitle, StatusPill } from "@/components/settings/shared/SettingsControls";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,7 @@ import { characterId, switchCharacter } from "@/lib/characters";
 import { useClient } from "@/providers/ClientProvider";
 
 export function CharacterSettings() {
+  const { t } = useTranslation();
   const { client, getToken } = useClient();
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,38 +39,38 @@ export function CharacterSettings() {
 
   return <section className="settings-stack">
     <div className="settings-section-heading">
-      <SettingsSectionTitle>角色管理</SettingsSectionTitle>
-      <p className="w-full text-[13px] leading-6 text-muted-foreground">每个角色拥有独立的聊天和记忆。启用 QQ 后随主服务自动上线，关闭网页不影响连接。手动停止后保留所有记录，再次打开才恢复上线。</p>
+      <SettingsSectionTitle>{t("characters.manage")}</SettingsSectionTitle>
+      <p className="w-full text-[13px] leading-6 text-muted-foreground">{t("characters.manageHelp")}</p>
     </div>
-    {loading ? <p role="status" className="settings-list-inset text-[13px] text-muted-foreground">载入角色…</p>
+    {loading ? <p role="status" className="settings-list-inset text-[13px] text-muted-foreground">{t("characters.loading")}</p>
       : characters.length > 0 ? <SettingsGroup>
         {characters.map((role) => <SettingsRow key={role.id} title={<span className="break-words">{role.name}</span>}>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusPill tone={role.running ? "success" : "neutral"}>{role.running ? "运行中" : "已停止"}</StatusPill>
+            <StatusPill tone={role.running ? "success" : "neutral"}>{role.running ? t("characters.running") : t("characters.stopped")}</StatusPill>
             <Button size="sm" variant="outline" className="rounded-full font-normal" disabled={!!busy}
-              onClick={() => switchCharacter(role.id)}>打开</Button>
+              onClick={() => switchCharacter(role.id)}>{t("settings.actions.open")}</Button>
             {role.running && <Button size="sm" variant="ghost" className="rounded-full font-normal" disabled={!!busy}
-              onClick={() => void changeCharacter("stop", role.id)}>{busy === role.id && !deleting ? "停止中…" : "停止"}</Button>}
+              onClick={() => void changeCharacter("stop", role.id)}>{busy === role.id && !deleting ? t("characters.stopping") : t("characters.stop")}</Button>}
             <Button size="sm" variant="ghost" className="rounded-full font-normal text-destructive hover:bg-destructive/10 hover:text-destructive"
-              disabled={!!busy} onClick={() => { setError(""); setDeleting(role); }}>删除</Button>
+              disabled={!!busy} onClick={() => { setError(""); setDeleting(role); }}>{t("settings.actions.delete")}</Button>
           </div>
         </SettingsRow>)}
-      </SettingsGroup> : !error && <p className="settings-list-inset text-[13px] text-muted-foreground">暂无角色。可从侧栏的角色下拉菜单创建角色或导入角色卡。</p>}
+      </SettingsGroup> : !error && <p className="settings-list-inset text-[13px] text-muted-foreground">{t("characters.empty")}</p>}
     {error && !deleting && <p role="alert" className="settings-list-inset text-[13px] text-destructive">{error}</p>}
     <AlertDialog open={!!deleting} onOpenChange={(open) => { if (!open && !busy) setDeleting(null); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle className="break-words">删除“{deleting?.name}”？</AlertDialogTitle>
+          <AlertDialogTitle className="break-words">{t("characters.deleteTitle", { name: deleting?.name })}</AlertDialogTitle>
           <AlertDialogDescription>
-            将停止该助手，并永久删除其独立目录内的配置、提示词、聊天记录、记忆和附件。此操作无法撤销。
+            {t("characters.deleteHelp")}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error && <p role="alert" className="break-words text-[13px] text-destructive">{error}</p>}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={!!busy}>取消</AlertDialogCancel>
+          <AlertDialogCancel disabled={!!busy}>{t("settings.actions.cancel")}</AlertDialogCancel>
           <AlertDialogAction disabled={!!busy} className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             onClick={(event) => { event.preventDefault(); if (deleting) void changeCharacter("delete", deleting.id); }}>
-            {busy ? "删除中…" : "确认删除"}
+            {busy ? t("settings.actions.deleting") : t("deleteConfirm.confirm")}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

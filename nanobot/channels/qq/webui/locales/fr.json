@@ -40,6 +40,34 @@
           "true": "Activé",
           "false": "Désactivé"
         }
+      },
+      "ackEnabled": {
+        "label": "Envoyer un accusé de réception",
+        "choices": {
+          "true": "Activé",
+          "false": "Désactivé"
+        }
+      },
+      "streaming": {
+        "label": "Réponses privées en continu",
+        "choices": {
+          "true": "Activé",
+          "false": "Désactivé"
+        }
+      },
+      "sendProgress": {
+        "label": "Afficher la progression",
+        "choices": {
+          "true": "Activé",
+          "false": "Désactivé"
+        }
+      },
+      "sendToolHints": {
+        "label": "Afficher les appels d’outils",
+        "choices": {
+          "true": "Activé",
+          "false": "Désactivé"
+        }
       }
     }
   }
