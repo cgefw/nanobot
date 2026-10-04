@@ -41,6 +41,7 @@ from nanobot.webui.file_preview import (
     WebUIFilePreviewError,
     file_preview_availability_payload,
     file_preview_payload,
+    file_reference_payload,
 )
 from nanobot.webui.gateway_tokens import GatewayTokenStore, token_response_payload
 from nanobot.webui.http_utils import JSONResponseMetrics
@@ -65,9 +66,6 @@ from nanobot.webui.http_utils import (
 )
 from nanobot.webui.http_utils import (
     is_local_browser_request as _is_local_browser_request,
-)
-from nanobot.webui.http_utils import (
-    is_localhost as _is_localhost,
 )
 from nanobot.webui.http_utils import is_loopback_host as _is_loopback_host
 from nanobot.webui.http_utils import (
@@ -129,6 +127,7 @@ from nanobot.webui.skills_marketplace import (
     search_marketplace_skills,
     trending_marketplace_skills,
 )
+from nanobot.webui.star_prompt import update_star_prompt
 from nanobot.webui.thread_disk import delete_webui_thread
 from nanobot.webui.transcript import (
     TranscriptReplayStats,
@@ -165,6 +164,21 @@ class _WebUIThreadDiagnostics:
     event_loop_lag_ms: float = 0.0
 
 _WEBUI_MUTATION_PATHS = {
+    "remote.discover": "/api/remote-instances/discover",
+    "remote.pair_start": "/api/remote-instances/pair_start",
+    "remote.pair_preview": "/api/remote-instances/pair_preview",
+    "remote.pair_finish": "/api/remote-instances/pair_finish",
+    "remote.pair_cancel": "/api/remote-instances/pair_cancel",
+    "remote.pair_route": "/api/remote-instances/pair_route",
+    "remote.inspect": "/api/remote-instances/inspect",
+    "remote.pick_file": "/api/remote-instances/pick_file",
+    "remote.save": "/api/remote-instances/save",
+    "remote.rename": "/api/remote-instances/rename",
+    "remote.connect": "/api/remote-instances/connect",
+    "remote.disconnect": "/api/remote-instances/disconnect",
+    "remote.remove": "/api/remote-instances/remove",
+    "remote.fingerprint": "/api/remote-instances/fingerprint",
+    "remote.trust": "/api/remote-instances/trust",
     "automation.enable": "/api/webui/automations/enable",
     "automation.disable": "/api/webui/automations/disable",
     "automation.delete": "/api/webui/automations/delete",
@@ -173,6 +187,8 @@ _WEBUI_MUTATION_PATHS = {
     "skill.install": "/api/webui/skills/install",
     "skill.update": "/api/webui/skills/update",
     "skill.delete": "/api/webui/skills/delete",
+    "star_prompt.claim": "/api/webui/star-prompt/claim",
+    "star_prompt.dismiss": "/api/webui/star-prompt/dismiss",
     "sidebar.update": "/api/webui/sidebar-state/update",
     "workspace.pick_folder": "/api/workspaces/pick-folder",
     "recovery.continue": "/api/webui/recovery/continue",
@@ -384,6 +400,11 @@ class GatewayHTTPHandler:
             AgentProfile(profile_config) if not card_path and profile_config.roleplay.agent_name else None
         )
         self.characters = None if self.character or self.agent_profile else CharacterManager(settings.config)
+        from nanobot.webui.remote_instances import RemoteInstances
+
+        self.remote_instances = RemoteInstances(
+            settings.config.path.parent / "webui", local_gateway_id=tokens.instance_id,
+        )
         self.skills_workspace_path = skills_workspace_path
         self.disabled_skills: set[str] = (
             disabled_skills if disabled_skills is not None else set()
@@ -446,9 +467,7 @@ class GatewayHTTPHandler:
             request = getattr(connection, "request", None)
             headers = getattr(request, "headers", None)
         if not isinstance(headers, Mapping):
-            # Lightweight in-process test connections do not carry a
-            # handshake request. Real WebSocket connections do.
-            return _is_localhost(connection)
+            return False
         return _is_local_browser_request(connection, headers)
 
     def workspace_folder_picker_available(
@@ -540,6 +559,8 @@ class GatewayHTTPHandler:
         return _http_error(404, "WebUI mutation action not found")
 
     def _is_webui_mutation_path(self, path: str) -> bool:
+        if path.startswith("/api/remote-instances/"):
+            return True
         if self.settings_routes.is_mutation_path(path):
             return True
         if re.match(r"^/api/sessions/[^/]+/delete$", path):
@@ -552,6 +573,8 @@ class GatewayHTTPHandler:
             "/api/webui/skills/install",
             "/api/webui/skills/update",
             "/api/webui/skills/delete",
+            "/api/webui/star-prompt/claim",
+            "/api/webui/star-prompt/dismiss",
             "/api/webui/sidebar-state/update",
             "/api/workspaces/pick-folder",
         }
@@ -605,6 +628,8 @@ class GatewayHTTPHandler:
                 return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
             except (ValueError, OSError) as exc:
                 return _http_error(400, str(exc))
+        if got == "/api/remote-instances" or got.startswith("/api/remote-instances/"):
+            return await self._dispatch_remote_instances(connection, request, got)
         # Token issue endpoint
         if self.config.token_issue_path:
             issue_expected = _normalize_config_path(self.config.token_issue_path)
@@ -661,6 +686,38 @@ class GatewayHTTPHandler:
                 return response
 
         return connection.respond(404, "Not Found")
+
+    async def _dispatch_remote_instances(
+        self, connection: Any, request: WsRequest, path: str,
+    ) -> Response:
+        from pydantic import ValidationError
+
+        from nanobot.webui.remote_ssh import RemoteError
+
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        # A public/reverse-proxied WebUI must never gain access to this machine's
+        # SSH agent, private keys or network. Same checks as local folder picking.
+        if not (_is_loopback_host(self.config.host)
+                and _is_local_browser_request(connection, request.headers)):
+            return _http_error(403, "remote_connections_local_only")
+        origin = request.headers.get("Origin", "")
+        if origin and not _is_loopback_host(urlsplit(origin).hostname or ""):
+            return _http_error(403, "remote_connections_local_only")
+        try:
+            if path == "/api/remote-instances":
+                return _http_json_response(await self.remote_instances.health(), extra_headers=_NO_STORE_HEADERS)
+            if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+                return _http_error(405, "WebSocket required")
+            payload = getattr(request, _WEBUI_MUTATION_PAYLOAD_ATTR, {})
+            result = await self.remote_instances.action(path.rsplit("/", 1)[-1], payload)
+            return _http_json_response(result, extra_headers=_NO_STORE_HEADERS)
+        except RemoteError as exc:
+            return _http_error(400, str(exc))
+        except ValidationError:
+            return _http_error(400, "invalid_profile")
+        except OSError:
+            return _http_error(500, "local_io_error")
 
     def _log_slow_http(self, path: str, response: Any | None, started: float) -> None:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -725,7 +782,9 @@ class GatewayHTTPHandler:
             elif not is_local_browser:
                 return _http_error(403, "bootstrap is localhost-only")
 
-        terminal = {"protocolVersion": 1, "gatewayId": self.tokens.instance_id}
+        from nanobot.webui.client_contract import gateway_identity
+
+        terminal = gateway_identity(self.tokens.instance_id)
         if terminal_probe:
             # Capability probing does not allocate credentials or acquire client leases.
             return _http_json_response(terminal, extra_headers=_NO_STORE_HEADERS)
@@ -1179,17 +1238,20 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         path = _query_first(query, "path")
         is_probe = _query_first(query, "probe") == "1"
+        metadata_only = _query_first(query, "metadata") == "1"
         try:
             scope = self.workspaces.scope_for_session_key(decoded_key)
-            if is_probe:
+            if metadata_only:
+                payload = file_reference_payload(path, scope=scope)
+            elif is_probe:
                 payload = file_preview_availability_payload(path, scope=scope)
             else:
                 payload = file_preview_payload(path, scope=scope)
         except WebUIFilePreviewError as e:
-            if is_probe and e.status in {400, 403, 404, 415}:
-                return _http_json_response({"available": False})
+            if is_probe and not metadata_only and e.status in {400, 403, 404, 413, 415}:
+                return _http_json_response({"available": False}, extra_headers=_NO_STORE_HEADERS)
             return _http_error(e.status, e.message)
-        return _http_json_response(payload)
+        return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
 
     def _handle_session_automations(self, request: WsRequest, key: str) -> Response:
         if not self.check_api_token(request):
@@ -1508,6 +1570,15 @@ class GatewayHTTPHandler:
         m = re.match(r"^/api/webui/skills/([^/]+)$", got)
         if m:
             return self._handle_webui_skill_detail(request, m.group(1))
+        if got in {"/api/webui/star-prompt/claim", "/api/webui/star-prompt/dismiss"}:
+            if not self.check_api_token(request):
+                return _http_error(401, "Unauthorized")
+            try:
+                show = update_star_prompt("claim" if got.endswith("/claim") else "dismiss")
+            except (OSError, ValueError, TimeoutError):
+                self._log.exception("failed to persist star invitation state")
+                return _http_error(500, "failed to save reminder preference")
+            return _http_json_response({"show": show})
         if got == "/api/webui/sidebar-state":
             return self._handle_webui_sidebar_state(request)
         if got == "/api/webui/sidebar-state/update":

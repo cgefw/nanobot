@@ -12,13 +12,20 @@ import {
 import { ArrowRight, ChevronDown, Eye, EyeOff, Moon, ShieldCheck, Sun, X } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 import { channelUiPresentation } from "@/channel-plugins/registry";
+import { StarPrompt } from "@/components/StarPrompt";
 import { Sidebar } from "@/components/Sidebar";
 import { CharacterSidebar } from "@/components/Characters";
+import { RemoteInstances, useRemoteConnections } from "@/components/remote/RemoteInstances";
+import { RemoteConnectionsPage } from "@/components/remote/RemoteConnectionsPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { SidebarResizeHandle, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from "@/components/SidebarResizeHandle";
 import { matchSidebarShortcut } from "@/lib/sidebar-shortcuts";
 import type { SidebarDeleteItem } from "@/components/ChatList";
 import type { SettingsSectionKey } from "@/components/settings/SettingsView";
+import { StartupShell } from "@/components/StartupShell";
+import { ComposerDraftStore, clearStoredComposerDrafts } from "@/lib/composer-draft";
+import { activateReloadCache, clearReloadCache } from "@/lib/reload-cache";
+import { webuiThreadCache } from "@/lib/webui-thread-cache";
 import { ThreadVisibilityContext } from "@/hooks/useThreadVisibility";
 import type { SettingsExitGuard } from "@/components/settings/contracts";
 import { PaneWorkbench } from "@/components/workbench/PaneWorkbench";
@@ -49,6 +56,7 @@ import { useSkills } from "@/hooks/useSkills";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useAppViewport } from "@/hooks/useAppViewport";
 import type { SendAttachment, SendOptions } from "@/hooks/useNanobotStream";
 import { ThemeProvider, useTheme } from "@/hooks/useTheme";
 import { logoFallbackUrls } from "@/lib/provider-brand";
@@ -66,6 +74,7 @@ import { displayTitle, sortSessions } from "@/lib/chat-groups";
 import { deriveTitle } from "@/lib/format";
 import { NanobotClient } from "@/lib/nanobot-client";
 import { ThreadMessageCache } from "@/lib/thread-message-cache";
+import { FilePreviewStore } from "@/hooks/useFilePreviewState";
 import { ClientProvider, useClient } from "@/providers/ClientProvider";
 import type {
   BootstrapResponse,
@@ -126,14 +135,15 @@ const TOKEN_REFRESH_MIN_DELAY_MS = 5_000;
 const PAIRING_POLL_INTERVAL_MS = 5_000;
 const PAIRING_IDLE_POLL_INTERVAL_MS = 15_000;
 const PAIRING_DISMISS_SNOOZE_MS = 30_000;
-type ShellView = "chat" | "settings" | "apps" | "automations" | "skills" | "channels";
+type ShellView = "chat" | "settings" | "apps" | "automations" | "skills" | "channels" | "remote";
 type ShellRoute = {
   view: ShellView;
   activeKey: string | null;
   settingsSection: SettingsSectionKey;
   temporary?: boolean;
 };
-const ThreadShell = lazy(() => import("@/components/thread/ThreadShell").then(
+const loadThreadShell = () => import("@/components/thread/ThreadShell");
+const ThreadShell = lazy(() => loadThreadShell().then(
   (module) => ({ default: module.ThreadShell }),
 ));
 const loadSettingsView = () => import("@/components/settings/SettingsView");
@@ -251,26 +261,36 @@ function readShellRoute(): ShellRoute {
   const settingsSection = isSettingsSectionKey(rawSettingsSection)
     ? rawSettingsSection
     : "overview";
-  const activeKey = params.get("chat")?.trim() || null;
+  const saved: unknown = window.history.state?.nanobotReturnChat;
+  const returnChat = saved && typeof saved === "object" && "hash" in saved
+    && saved.hash === window.location.hash ? saved : null;
+  const activeKey = params.get("chat")?.trim()
+    || (returnChat && "key" in returnChat && typeof returnChat.key === "string"
+      ? returnChat.key : null);
+  const temporary = Boolean(returnChat && "temporary" in returnChat && returnChat.temporary === true);
 
   if (path === "/settings") {
     return {
       view: shellViewForSettingsSection(settingsSection),
       activeKey,
+      temporary,
       settingsSection,
     };
   }
   if (path === "/apps") {
-    return { view: "apps", activeKey, settingsSection: "apps" };
+    return { view: "apps", activeKey, temporary, settingsSection: "apps" };
   }
   if (path === "/automations") {
-    return { view: "automations", activeKey, settingsSection: "automations" };
+    return { view: "automations", activeKey, temporary, settingsSection: "automations" };
   }
   if (path === "/channels") {
-    return { view: "channels", activeKey, settingsSection: "channels" };
+    return { view: "channels", activeKey, temporary, settingsSection: "channels" };
+  }
+  if (path === "/remote") {
+    return { view: "remote", activeKey, temporary, settingsSection: "overview" };
   }
   if (path === "/skills") {
-    return { view: "skills", activeKey, settingsSection: "skills" };
+    return { view: "skills", activeKey, temporary, settingsSection: "skills" };
   }
   if (path.startsWith("/temporary/")) {
     const encoded = path.slice("/temporary/".length);
@@ -313,7 +333,6 @@ function shellRouteHash(route: ShellRoute): string {
       : "#/new";
   }
   const params = new URLSearchParams();
-  if (route.activeKey) params.set("chat", route.activeKey);
   if (route.view === "settings" && route.settingsSection !== "overview") {
     params.set("section", route.settingsSection);
   }
@@ -324,20 +343,20 @@ function shellRouteHash(route: ShellRoute): string {
 function writeShellRoute(route: ShellRoute, replace = false): void {
   if (typeof window === "undefined") return;
   const nextHash = shellRouteHash(route);
-  if (window.location.hash === nextHash) return;
-  if (replace) {
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${window.location.search}${nextHash}`,
-    );
-    return;
+  const state = {
+    ...window.history.state,
+    nanobotReturnChat: route.view === "chat" ? null : {
+      hash: nextHash,
+      key: route.activeKey,
+      temporary: route.temporary === true,
+    },
+  };
+  const url = `${window.location.pathname}${window.location.search}${nextHash}`;
+  if (replace || window.location.hash === nextHash) {
+    window.history.replaceState(state, "", url);
+  } else {
+    window.history.pushState(state, "", url);
   }
-  window.history.pushState(
-    null,
-    "",
-    `${window.location.pathname}${window.location.search}${nextHash}`,
-  );
 }
 
 function bootstrapTokenExpiresAt(expiresInSeconds: number): number {
@@ -879,6 +898,7 @@ function resolveRuntimeSurface(
 }
 
 export default function App() {
+  useAppViewport();
   const { t } = useTranslation();
   const [state, setState] = useState<BootState>({ status: "loading" });
   const bootstrapSecretRef = useRef("");
@@ -918,6 +938,7 @@ export default function App() {
   const bootstrapWithSecret = useCallback(
     (secret: string) => {
       let cancelled = false;
+      if (readShellRoute().view === "chat") void loadThreadShell().catch(() => {});
       (async () => {
         setState({ status: "loading" });
         try {
@@ -925,6 +946,7 @@ export default function App() {
           if (cancelled) return;
           if (secret) saveSecret(secret);
           const url = deriveWsUrl(boot.ws_path, boot.token, boot.ws_url);
+          activateReloadCache(url);
           const runtimeSurface = resolveRuntimeSurface(boot.runtime_surface, "browser");
           const runtimeHost = createRuntimeHost(runtimeSurface, boot.runtime_capabilities);
           const client = new NanobotClient({
@@ -956,6 +978,9 @@ export default function App() {
         } catch (e) {
           if (cancelled) return;
           if (isBootstrapAuthRequired(e)) {
+            clearReloadCache();
+            clearStoredComposerDrafts();
+            webuiThreadCache.clear();
             setState({ status: "auth", failed: !!secret });
           } else {
             setState({
@@ -980,6 +1005,9 @@ export default function App() {
         await refreshReadyClient(client, state.runtimeSurface);
       } catch (e) {
         if (isBootstrapAuthRequired(e)) {
+          clearReloadCache();
+          clearStoredComposerDrafts();
+          webuiThreadCache.clear();
           setState({ status: "auth", failed: !!bootstrapSecretRef.current });
         }
       }
@@ -993,19 +1021,7 @@ export default function App() {
   }, [bootstrapWithSecret]);
 
   if (state.status === "loading") {
-    return (
-      <div className="flex h-full w-full items-center justify-center">
-        <div className="flex flex-col items-center gap-3 animate-in fade-in-0 duration-300">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-foreground/40" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/60" />
-            </span>
-            {t("app.loading.connecting")}
-          </div>
-        </div>
-      </div>
-    );
+    return <StartupShell />;
   }
   if (state.status === "auth") {
     return (
@@ -1040,6 +1056,9 @@ export default function App() {
       state.client.close();
     }
     clearSavedSecret();
+    clearReloadCache();
+    clearStoredComposerDrafts();
+    webuiThreadCache.clear();
     setState({ status: "auth" });
   };
 
@@ -1075,12 +1094,12 @@ export default function App() {
       modelName={state.modelName}
       ingressLimits={state.ingressLimits}
     >
-      <Shell
+      <RemoteInstances><Shell
         runtimeSurface={state.runtimeSurface}
         onModelNameChange={handleModelNameChange}
         onLogout={handleLogout}
         onNativeEngineRestart={handleNativeEngineRestart}
-      />
+      /></RemoteInstances>
     </ClientProvider>
   );
 }
@@ -1097,8 +1116,28 @@ function Shell({
   onNativeEngineRestart: () => Promise<string>;
 }) {
   const { t, i18n } = useTranslation();
-  const { client, getToken } = useClient();
+  const remoteConnections = useRemoteConnections();
+  const localActive = remoteConnections?.localActive !== false;
+  const managingConnections = remoteConnections?.managing === true && !remoteConnections?.activeHostId;
   const { theme, toggle } = useTheme();
+  const managementMain = useRef<HTMLElement>(null);
+  const reportManagementSurface = remoteConnections?.reportManagementSurface;
+  useEffect(() => {
+    const main = managementMain.current;
+    if (!main || !reportManagementSurface) return;
+    const report = () => {
+      const rect = main.getBoundingClientRect();
+      reportManagementSurface({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }, theme);
+    };
+    const observer = new ResizeObserver(report);
+    observer.observe(main);
+    window.addEventListener("resize", report);
+    report();
+    return () => { observer.disconnect(); window.removeEventListener("resize", report); };
+  }, [reportManagementSurface, theme]);
+  const remoteConnectionsRef = useRef(remoteConnections);
+  remoteConnectionsRef.current = remoteConnections;
+  const { client, getToken } = useClient();
   const {
     sessions,
     loading,
@@ -1120,6 +1159,16 @@ function Shell({
     initialRouteRef.current.activeKey,
   );
   const [view, setView] = useState<ShellView>(initialRouteRef.current.view);
+  const [chatVisited, setChatVisited] = useState(initialRouteRef.current.view === "chat");
+  useEffect(() => {
+    if (view === "chat") setChatVisited(true);
+  }, [view]);
+  useEffect(() => {
+    // Normalize legacy links while retaining their return destination in history.
+    if (new URLSearchParams(window.location.hash.split("?")[1]).has("chat")) {
+      writeShellRoute(initialRouteRef.current!, true);
+    }
+  }, []);
   const [temporarySessions, setTemporarySessions] = useState<Record<string, ChatSummary>>({});
   const [temporaryChatEnabled, setTemporaryChatEnabled] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
@@ -1129,6 +1178,10 @@ function Shell({
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [sidebarDragging, setSidebarDragging] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  useEffect(() => {
+    // The drawer portals outside the local host panel; don't leave it over a remote view.
+    if (!localActive || managingConnections) setMobileSidebarOpen(false);
+  }, [localActive, managingConnections]);
   const mobileSidebarRef = useRef<HTMLDivElement>(null);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const mobileWorkbench = useMediaQuery("(max-width: 767px)");
@@ -1176,6 +1229,8 @@ function Shell({
   const skills = useSkills(getToken);
   const pageVisible = usePageVisibility();
   const [settingsSnapshot, setSettingsSnapshot] = useState<SettingsPayload | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const settingsRefreshGenerationRef = useRef(0);
   const [pendingAutomationMessage, setPendingAutomationMessage] = useState<{
     id: string;
     chatId: string;
@@ -1185,7 +1240,10 @@ function Shell({
   } | null>(null);
   const settingsExitGuardRef = useRef<SettingsExitGuard | null>(null);
   const currentShellRouteRef = useRef<ShellRoute>({ view, activeKey, settingsSection: settingsInitialSection });
-  currentShellRouteRef.current = { view, activeKey, settingsSection: settingsInitialSection };
+  currentShellRouteRef.current = {
+    view, activeKey, settingsSection: settingsInitialSection,
+    temporary: Boolean(activeKey && temporarySessions[activeKey]),
+  };
   const registerSettingsExitGuard = useCallback((guard: SettingsExitGuard | null) => {
     settingsExitGuardRef.current = guard;
   }, []);
@@ -1204,7 +1262,7 @@ function Shell({
   const showMainSidebar = view !== "settings";
   const activeTemporarySession = activeKey ? temporarySessions[activeKey] ?? null : null;
   const temporaryChatId = activeTemporarySession?.chatId ?? null;
-  const temporaryChatActive = view === "chat" && temporaryChatId !== null;
+  const temporaryChatActive = temporaryChatId !== null;
   const temporaryChatRequested = temporaryChatActive || temporaryChatEnabled;
   const temporarySessionList = useMemo(
     () => Object.values(temporarySessions).sort((a, b) => (
@@ -1219,24 +1277,36 @@ function Shell({
   // Pane shells can unmount during navigation. Keep replay state for this app
   // session, pinning temporary chats because they cannot reload disk history.
   const retainedTemporaryChatIdsRef = useRef(new Set<string>());
+  const [draftStore] = useState(() => new ComposerDraftStore());
+  const [filePreviewStore] = useState(() => new FilePreviewStore());
   const [threadMessageCache] = useState(() => new ThreadMessageCache(
     (key) => retainedTemporaryChatIdsRef.current.has(key),
   ));
   useEffect(() => {
     const retained = new Set(temporaryChatIds);
     for (const chatId of retainedTemporaryChatIdsRef.current) {
-      if (!retained.has(chatId)) threadMessageCache.delete(chatId);
+      if (!retained.has(chatId)) {
+        threadMessageCache.delete(chatId);
+        filePreviewStore.delete(`websocket:${chatId}`);
+        draftStore.delete(`websocket:${chatId}`);
+      }
     }
     retainedTemporaryChatIdsRef.current = retained;
-  }, [temporaryChatIds, threadMessageCache]);
+  }, [temporaryChatIds, threadMessageCache, filePreviewStore, draftStore]);
 
   const navigate = useCallback(
     (route: ShellRoute, options?: { replace?: boolean }) => {
       const leave = () => {
+        // The visible sidebar always belongs to its existing host. Navigation
+        // dismisses global management without switching to a different host.
+        if (remoteConnectionsRef.current?.managing) remoteConnectionsRef.current.closeManagement();
         setActiveKey(route.activeKey);
         setView(route.view);
         setSettingsInitialSection(route.settingsSection);
-        writeShellRoute(route, options?.replace);
+        writeShellRoute({
+          ...route,
+          temporary: route.temporary || Boolean(route.activeKey && temporarySessionsRef.current[route.activeKey]),
+        }, options?.replace);
       };
       if (currentShellRouteRef.current.view === "settings" && route.view !== "settings" && settingsExitGuardRef.current) {
         settingsExitGuardRef.current(leave);
@@ -1248,6 +1318,7 @@ function Shell({
   useEffect(() => {
     const applyRoute = () => {
       const route = readShellRoute();
+      if (route.view === "remote") setMobileSidebarOpen(false);
       if (currentShellRouteRef.current.view === "settings" && route.view !== "settings" && settingsExitGuardRef.current) {
         writeShellRoute(currentShellRouteRef.current, true);
         settingsExitGuardRef.current(() => {
@@ -1293,12 +1364,21 @@ function Shell({
 
   useEffect(() => {
     let cancelled = false;
+    const requestGeneration = settingsRefreshGenerationRef.current;
+    setSettingsLoading(true);
     fetchSettings(getToken())
       .then((payload) => {
-        if (!cancelled) setSettingsSnapshot(payload);
+        if (!cancelled && requestGeneration === settingsRefreshGenerationRef.current) {
+          setSettingsSnapshot(payload);
+        }
       })
       .catch(() => {
-        if (!cancelled) setSettingsSnapshot(null);
+        if (!cancelled && requestGeneration === settingsRefreshGenerationRef.current) {
+          setSettingsSnapshot(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSettingsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1490,9 +1570,11 @@ function Shell({
     }
     if (!activeKey) return;
     const currentRoute = readShellRoute();
+    if (temporarySessions[activeKey]) return;
     if (currentRoute.temporary) {
-      if (temporarySessions[activeKey]) return;
-      navigate(defaultShellRoute(), { replace: true });
+      navigate(currentRoute.view === "chat" ? defaultShellRoute() : {
+        ...currentRoute, activeKey: null, temporary: false,
+      }, { replace: true });
       return;
     }
     if (sessions.some((session) => session.key === activeKey)) return;
@@ -2091,6 +2173,7 @@ function Shell({
     const actions = { newChat: onNewChat, search: onOpenSessionSearch, apps: onOpenApps,
       skills: onOpenSkills, automations: onOpenAutomations, channels: onOpenChannels, settings: () => onOpenSettings() };
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!localActive) return;
       const action = matchSidebarShortcut(event);
       if (!action) return;
       event.preventDefault();
@@ -2098,7 +2181,7 @@ function Shell({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onNewChat, onOpenSessionSearch, onOpenApps, onOpenSkills, onOpenAutomations, onOpenChannels, onOpenSettings]);
+  }, [localActive, onNewChat, onOpenSessionSearch, onOpenApps, onOpenSkills, onOpenAutomations, onOpenChannels, onOpenSettings]);
 
   const onSettingsSectionChange = useCallback(
     (section: SettingsSectionKey) => {
@@ -2115,12 +2198,14 @@ function Shell({
     setMobileSidebarOpen(false);
     const nextKey = (() => {
       if (!activeKey) return null;
+      if (temporarySessionsRef.current[activeKey]) return activeKey;
       if (topicSessions.some((session) => session.key === activeKey)) return activeKey;
-      return topicSessions[0]?.key ?? null;
+      return null;
     })();
     navigate({
       view: "chat",
       activeKey: nextKey,
+      temporary: Boolean(nextKey && temporarySessionsRef.current[nextKey]),
       settingsSection: "overview",
     });
   }, [activeKey, navigate, topicSessions]);
@@ -2192,6 +2277,7 @@ function Shell({
       }
       if (!wasOpen) return;
       wasOpen = false;
+      filePreviewStore.clear();
       if (Object.keys(temporarySessionsRef.current).length === 0) return;
       temporarySessionsRef.current = {};
       setTemporarySessions({});
@@ -2199,10 +2285,24 @@ function Shell({
         navigate(defaultShellRoute(), { replace: true });
       }
     });
-  }, [client, navigate]);
+  }, [client, navigate, filePreviewStore]);
 
   useEffect(() => {
-    return client.onStatus((status) => {
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    const refreshSettings = (generation: number, attempt = 0): void => {
+      void fetchSettings(getToken())
+        .then((payload) => {
+          if (!cancelled && generation === settingsRefreshGenerationRef.current) {
+            setSettingsSnapshot(payload);
+          }
+        })
+        .catch(() => {
+          if (cancelled || generation !== settingsRefreshGenerationRef.current || attempt >= 3) return;
+          retryTimer = window.setTimeout(() => refreshSettings(generation, attempt + 1), 250);
+        });
+    };
+    const unsubscribe = client.onStatus((status) => {
       const startedAt = (() => {
         try {
           return Number(window.localStorage.getItem(RESTART_STARTED_KEY) ?? "0");
@@ -2223,11 +2323,18 @@ function Shell({
       } catch {
         // ignore storage errors
       }
+      const refreshGeneration = ++settingsRefreshGenerationRef.current;
       setIsRestarting(false);
       setRestartToast(t("app.restart.completed", { seconds: (elapsedMs / 1000).toFixed(1) }));
       window.setTimeout(() => setRestartToast(null), 3_500);
+      refreshSettings(refreshGeneration);
     });
-  }, [client, t]);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [client, getToken, t]);
 
   const onTurnEnd = useDeferredTitleRefresh(
     temporaryChatActive ? null : activePaneSession,
@@ -2273,6 +2380,8 @@ function Shell({
           });
           return;
         }
+        filePreviewStore.delete(item.key);
+        draftStore.delete(item.key);
       }
       setPendingDelete(null);
       if (deletingActive) {
@@ -2285,7 +2394,7 @@ function Shell({
     } catch (e) {
       console.error("Failed to delete session", e);
     }
-  }, [pendingDelete, deleteChat, activeKey, activeTabState, navigate, topicSessions]);
+  }, [pendingDelete, deleteChat, activeKey, activeTabState, navigate, topicSessions, filePreviewStore, draftStore]);
 
   const onRequestDeleteMany = useCallback(async (items: SidebarDeleteItem[]) => {
     const uniqueItems = Array.from(new Map(items.map((item) => [item.key, item])).values());
@@ -2562,6 +2671,7 @@ function Shell({
   }, [updateWorkbenchState]);
 
   useEffect(() => {
+    if (!localActive) return;
     if (view === "settings") {
       document.title = t("app.documentTitle.chat", {
         title: t("settings.sidebar.title"),
@@ -2584,6 +2694,10 @@ function Shell({
       document.title = t("app.documentTitle.chat", { title: t("settings.nav.channels") });
       return;
     }
+    if (view === "remote") {
+      document.title = t("app.documentTitle.chat", { title: t("remote.title") });
+      return;
+    }
     if (view === "skills") {
       document.title = t("app.documentTitle.chat", {
         title: t("settings.nav.skills", { defaultValue: "Skills" }),
@@ -2593,7 +2707,7 @@ function Shell({
     document.title = activeSession
       ? t("app.documentTitle.chat", { title: headerTitle })
       : t("app.documentTitle.base");
-  }, [activeSession, headerTitle, i18n.resolvedLanguage, t, view]);
+  }, [localActive, activeSession, headerTitle, i18n.resolvedLanguage, t, view]);
 
   const pinnedPaneKeys = useMemo(
     () => new Set(sidebarState.pinned_keys),
@@ -2618,11 +2732,11 @@ function Shell({
   const sidebarProps = {
     sessions: sidebarTopicSessions,
     temporarySessions: temporarySessionList,
-    activeKey: view === "chat"
+    activeKey: !managingConnections && view === "chat"
       ? (temporaryChatActive ? activeKey : activeSidebarKey)
       : null,
     loading,
-    newChatActive: view === "chat" && activeKey === null,
+    newChatActive: !managingConnections && view === "chat" && activeKey === null,
     onNewChat,
     onSelect: onSelectSidebarItem,
     onCloseTemporaryChat,
@@ -2648,7 +2762,7 @@ function Shell({
     onOpenSkills,
     onSettingsIntent,
     onOpenSearch: onOpenSessionSearch,
-    activeUtility: view === "apps" || view === "automations" || view === "skills" || view === "channels" ? view : null,
+    activeUtility: !managingConnections && (view === "apps" || view === "automations" || view === "skills" || view === "channels") ? view : null,
     onToggleArchived,
     pinnedKeys: sidebarPinnedTabKeys,
     archivedKeys: sidebarArchivedTabKeys,
@@ -2677,6 +2791,7 @@ function Shell({
 
   return (
     <ThemeProvider theme={theme}>
+      <StarPrompt ready={localActive && !managingConnections && !loading && !sidebarStateLoading} />
       <div
         className={cn(
           "relative h-full w-full overflow-hidden",
@@ -2794,19 +2909,23 @@ function Shell({
               />
             </Suspense>
           ) : null}
-        <main
+        <main ref={managementMain}
+          aria-hidden={managingConnections && remoteConnections?.embeddedManagement || undefined}
+          {...(managingConnections && remoteConnections?.embeddedManagement ? { inert: "" } : {})}
           className={cn(
             "relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background",
           )}
         >
-            <div
+          <div className={cn("absolute inset-0 flex flex-col", managingConnections && "hidden")}
+            aria-hidden={managingConnections || undefined} {...(managingConnections ? { inert: "" } : {})}>
+            {(view === "chat" || chatVisited) && <div
               className={cn(
                 "absolute inset-0 flex flex-col",
                 view !== "chat" && "hidden",
               )}
             >
-              <ThreadVisibilityContext.Provider value={view === "chat"}>
-                <Suspense fallback={<SurfaceLoadingFallback label={t("chat.loading")} />}>
+              <ThreadVisibilityContext.Provider value={localActive && !managingConnections && view === "chat"}>
+                <Suspense fallback={<StartupShell embedded />}>
                   <PaneWorkbench
                     panes={renderedWorkbenchPanes}
                     activePaneKey={renderedActivePaneKey}
@@ -2850,6 +2969,8 @@ function Shell({
                             temporary={temporaryChatRequested}
                             temporaryChatIds={temporaryChatIds}
                             messageCache={threadMessageCache}
+                            filePreviewStore={filePreviewStore}
+                            draftStore={draftStore}
                             temporaryChatEnabled={temporaryChatEnabled}
                             onTemporaryChatEnabledChange={
                               !activeKey ? onTemporaryChatEnabledChange : undefined
@@ -2874,6 +2995,7 @@ function Shell({
                             workspaceError={workspaceError}
                             onWorkspaceScopeChange={applyWorkspaceScope}
                             settingsSnapshot={settingsSnapshot}
+                            settingsLoading={settingsLoading}
                             onOpenModelSettings={onOpenModelSettings}
                             skills={skills}
                           />
@@ -2896,6 +3018,8 @@ function Shell({
                           title={pane.title}
                           temporaryChatIds={temporaryChatIds}
                           messageCache={threadMessageCache}
+                          filePreviewStore={filePreviewStore}
+                          draftStore={draftStore}
                           onToggleSidebar={toggleSidebar}
                           onNewChat={onNewChat}
                           onCreateChat={onCreateChat}
@@ -2935,6 +3059,7 @@ function Shell({
                             client.setWorkspaceScope(paneSession.chatId, next);
                           }}
                           settingsSnapshot={settingsSnapshot}
+                          settingsLoading={settingsLoading}
                           onOpenModelSettings={onOpenModelSettings}
                           skills={skills}
                         />
@@ -2943,10 +3068,14 @@ function Shell({
                   />
                 </Suspense>
               </ThreadVisibilityContext.Provider>
-            </div>
+            </div>}
             {view !== "chat" && (
               <div className="absolute inset-0 flex flex-col">
-                <Suspense fallback={<SurfaceLoadingFallback />}>
+                {view === "remote" ? <RemoteConnectionsPage
+                  mainNavigationExpanded={showMainSidebar && hostSidebarOpen}
+                  hostChromeInset={showHostChrome}
+                  onBackToChat={onBackToChat}
+                /> : <Suspense fallback={<SurfaceLoadingFallback />}>
                   <SettingsView
                     registerExitGuard={registerSettingsExitGuard}
                     theme={theme}
@@ -2968,9 +3097,17 @@ function Shell({
                     isRestarting={isRestarting}
                     hostChromeInset={showHostChrome}
                   />
-                </Suspense>
+                </Suspense>}
               </div>
             )}
+          </div>
+          {managingConnections && !remoteConnections?.embeddedManagement && <div className="absolute inset-0 flex flex-col">
+            <RemoteConnectionsPage
+              mainNavigationExpanded={showMainSidebar && hostSidebarOpen}
+              hostChromeInset={showHostChrome}
+              onBackToChat={() => remoteConnections?.closeManagement()}
+            />
+          </div>}
           </main>
         </div>
 

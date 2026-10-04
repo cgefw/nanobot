@@ -1,7 +1,7 @@
 """Editable native agent instructions, scoped to the agent's own workspace."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from nanobot.config.schema import Config
 from nanobot.utils.helpers import (
@@ -14,12 +14,13 @@ AGENT_FILES = ("AGENTS.md", "SOUL.md", "USER.md")
 MAX_PROFILE_BYTES = 1024 * 1024
 
 
-def agent_files(value: Any) -> dict[str, str]:
-    if not isinstance(value, dict) or set(value) - set(AGENT_FILES):
+def agent_files(value: object) -> dict[str, str]:
+    source = cast(dict[object, object], value) if isinstance(value, dict) else None
+    if source is None or set(source) - set(AGENT_FILES):
         raise ValueError("仅支持 AGENTS.md、SOUL.md 和 USER.md")
     files: dict[str, str] = {}
     for name in AGENT_FILES:
-        content = value.get(name, "")
+        content = source.get(name, "")
         if not isinstance(content, str):
             raise ValueError(f"{name} 必须是文本")
         files[name] = content

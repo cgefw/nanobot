@@ -1,8 +1,10 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
+import { ComposerDraftStore } from "@/lib/composer-draft";
+import { encodeImage } from "@/lib/imageEncode";
 import { SESSION_DRAG_TYPE } from "@/lib/session-drag";
 import type { ChatSummary, CliAppInfo, McpPresetInfo, SlashCommand } from "@/lib/types";
 
@@ -346,6 +348,17 @@ function renderPresetComposer(
   };
 }
 
+function stubCoarsePointer(): void {
+  vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+    matches: query.includes("pointer: coarse"),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })));
+}
+
 describe("ThreadComposer", () => {
   it("locks an async send and keeps the draft when it is rejected", async () => {
     let resolveSend!: (accepted: boolean) => void;
@@ -404,6 +417,87 @@ describe("ThreadComposer", () => {
     expect(onSend).toHaveBeenCalledWith("hello from mobile", undefined, undefined);
     expect(input).toHaveValue("");
     expect(input).not.toHaveFocus();
+  });
+
+  it("inserts a newline instead of sending on Enter on coarse-pointer devices", () => {
+    stubCoarsePointer();
+    const onSend = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "line one" } });
+    const keyEvent = createEvent.keyDown(input, { key: "Enter" });
+    fireEvent(input, keyEvent);
+
+    expect(keyEvent.defaultPrevented).toBe(false);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps sending on Enter on precision-pointer devices", () => {
+    const onSend = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "desktop message" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSend).toHaveBeenCalledWith("desktop message", undefined, undefined);
+  });
+
+  it("still selects a slash command with Enter on coarse-pointer devices", () => {
+    stubCoarsePointer();
+    const onSend = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        placeholder="Type your message..."
+        slashCommands={COMMANDS}
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "/" } });
+    expect(screen.getByRole("option", { name: /\/history/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(input).toHaveValue("/history ");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("labels the keyboard action as enter on coarse-pointer devices", () => {
+    stubCoarsePointer();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+      />,
+    );
+
+    expect(screen.getByLabelText("Message input")).toHaveAttribute("enterkeyhint", "enter");
+  });
+
+  it("does not set enterkeyhint on precision-pointer devices", () => {
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+      />,
+    );
+
+    expect(screen.getByLabelText("Message input")).not.toHaveAttribute("enterkeyhint");
   });
 
   it("focuses and sends a removable quoted answer excerpt", async () => {
@@ -2873,6 +2967,98 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
   });
 
+  it("switches the primary action from Stop to Send while streaming once the user types", () => {
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={onStop}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "one more thing: " } });
+
+    expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onStop).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledWith("one more thing:", undefined, {
+      continueActiveTurn: true,
+    });
+  });
+
+  it("interjects with the send button on coarse-pointer devices while streaming", () => {
+    stubCoarsePointer();
+    const onSend = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "hold on, actually…" } });
+    const keyEvent = createEvent.keyDown(input, { key: "Enter" });
+    fireEvent(input, keyEvent);
+
+    // Enter inserts a newline on touch; the send button is the interject path.
+    expect(keyEvent.defaultPrevented).toBe(false);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSend).toHaveBeenCalledWith("hold on, actually…", undefined, {
+      continueActiveTurn: true,
+    });
+  });
+
+  it("preserves waiting guidance when the send button submits a newer draft", () => {
+    const onSend = vi.fn();
+    render(<ThreadComposer onSend={onSend} onStop={vi.fn()} isStreaming />);
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "waiting guidance" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "send this now" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSend).toHaveBeenCalledWith("send this now", undefined, { continueActiveTurn: true });
+    expect(screen.getByText("waiting guidance")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    expect(onSend).toHaveBeenLastCalledWith("waiting guidance", undefined, { continueActiveTurn: true });
+  });
+
+  it("does not mark side-channel commands as guidance during an active turn", () => {
+    const onSend = vi.fn();
+    render(<ThreadComposer onSend={onSend} onStop={vi.fn()} isStreaming slashCommands={COMMANDS} />);
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "/history 5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSend).toHaveBeenCalledWith("/history 5", undefined, { sideChannel: true });
+  });
+
+  it("keeps Stop available while a draft attachment is encoding", () => {
+    vi.mocked(encodeImage).mockReturnValueOnce(new Promise(() => {}));
+    const onStop = vi.fn();
+    const { container } = render(<ThreadComposer onSend={vi.fn()} onStop={onStop} isStreaming />);
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "unfinished draft" } });
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText("Message input")).toHaveValue("unfinished draft");
+  });
+
   it("queues plain guidance while a task is running", () => {
     const onSend = vi.fn();
     render(
@@ -3549,4 +3735,122 @@ describe("ThreadComposer", () => {
     ).toBeNull();
   });
 
+});
+
+
+describe("session composer drafts", () => {
+  it("restores independent drafts across session switches and remounts", () => {
+    const draftStore = new ComposerDraftStore();
+    const composer = (key: string) => (
+      <ThreadComposer key={key} draftKey={key} draftStore={draftStore} onSend={vi.fn()} />
+    );
+    const view = render(composer("chat-a"));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "  draft A\nnext line" } });
+    view.rerender(composer("chat-b"));
+    expect(screen.getByLabelText("Message input")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "draft B" } });
+    view.rerender(composer("chat-a"));
+    expect(screen.getByLabelText("Message input")).toHaveValue("  draft A\nnext line");
+    fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "z", ctrlKey: true });
+    expect(screen.getByLabelText("Message input")).toHaveValue("  draft A\nnext line");
+    view.unmount();
+    render(composer("chat-b"));
+    expect(screen.getByLabelText("Message input")).toHaveValue("draft B");
+  });
+
+  it("retains in-progress IME text without carrying composition into another chat", () => {
+    const draftStore = new ComposerDraftStore();
+    const composer = (key: string) => (
+      <ThreadComposer key={key} draftKey={key} draftStore={draftStore} onSend={vi.fn()} cliApps={CLI_APPS} />
+    );
+    const view = render(composer("chat-a"));
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "@gimp " } });
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "@\u00a0GIMP 草稿" } });
+    view.rerender(composer("chat-b"));
+    expect(screen.getByLabelText("Message input")).toHaveValue("");
+    view.rerender(composer("chat-a"));
+    expect(screen.getByLabelText("Message input")).toHaveValue("@\u00a0GIMP 草稿");
+  });
+
+  it.each([true, false])("clears only accepted sends (accepted=%s)", (accepted) => {
+    const draftStore = new ComposerDraftStore();
+    const composer = (key: string) => (
+      <ThreadComposer key={key} draftKey={key} draftStore={draftStore} onSend={() => accepted} />
+    );
+    const view = render(composer("chat-a"));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "send me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    view.rerender(composer("chat-b"));
+    view.rerender(composer("chat-a"));
+    expect(screen.getByLabelText("Message input")).toHaveValue(accepted ? "" : "send me");
+  });
+
+  it.each([false, true])("clears an accepted draft after restoring it unchanged (attachment=%s)", async (attachment) => {
+    mockBlobUrls();
+    const draftStore = new ComposerDraftStore();
+    let resolveSend!: (accepted: boolean) => void;
+    const onSend = vi.fn(() => new Promise<boolean>((resolve) => { resolveSend = resolve; }));
+    const composer = (key: string) => (
+      <ThreadComposer key={key} draftKey={key} draftStore={draftStore} persistDraft onSend={onSend} />
+    );
+    const view = render(composer("unchanged-draft"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "send once" } });
+    if (attachment) {
+      const file = new File(["image"], "draft.png", { type: "image/png" });
+      fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+      await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    view.rerender(composer("other-draft"));
+    view.rerender(composer("unchanged-draft"));
+    expect(screen.getByRole("textbox")).toHaveValue("send once");
+    if (attachment) await screen.findByText("draft.png");
+    await act(async () => resolveSend(true));
+    view.unmount();
+    expect(new ComposerDraftStore().get("unchanged-draft", true)).toBeUndefined();
+  });
+
+  it("does not delete a newer draft when an earlier async send completes", async () => {
+    const draftStore = new ComposerDraftStore();
+    let resolveSend!: (accepted: boolean) => void;
+    const onSend = vi.fn(() => new Promise<boolean>((resolve) => { resolveSend = resolve; }));
+    const composer = (key: string) => (
+      <ThreadComposer key={key} draftKey={key} draftStore={draftStore} onSend={onSend} />
+    );
+    const view = render(composer("chat-a"));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "first" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    view.rerender(composer("chat-b"));
+    view.rerender(composer("chat-a"));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "newer draft" } });
+    await act(async () => resolveSend(true));
+    view.rerender(composer("chat-b"));
+    view.rerender(composer("chat-a"));
+    expect(screen.getByLabelText("Message input")).toHaveValue("newer draft");
+  });
+
+  it("restores attachments and quoted context with their original session", async () => {
+    mockBlobUrls();
+    const draftStore = new ComposerDraftStore();
+    const onSend = vi.fn();
+    const composer = (key: string, quote = draftStore.get(key)?.quotedContext) => (
+      <ThreadComposer key={key} draftKey={key} draftStore={draftStore} quotedContext={quote} onSend={onSend} />
+    );
+    const view = render(composer("chat-a", "quoted answer"));
+    const file = new File(["image"], "draft.png", { type: "image/png" });
+    fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    view.rerender(composer("chat-b"));
+    expect(screen.queryByText("draft.png")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Quoted context")).not.toBeInTheDocument();
+    view.rerender(composer("chat-a"));
+    expect(await screen.findByText("draft.png")).toBeInTheDocument();
+    expect(screen.getByLabelText("Quoted context")).toHaveTextContent("quoted answer");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(onSend).toHaveBeenCalledWith("", [expect.objectContaining({
+      media: expect.objectContaining({ name: "draft.png" }),
+    })], { quotedContext: "quoted answer" });
+  });
 });

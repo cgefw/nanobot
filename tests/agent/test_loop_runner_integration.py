@@ -153,17 +153,6 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path):
             ],
             usage=None,
         ),
-        LLMResponse(
-            content="trying to start another goal",
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_create_again",
-                    name="create_goal",
-                    arguments={"objective": "Start an unrelated follow-up."},
-                )
-            ],
-            usage=None,
-        ),
         LLMResponse(content="done", tool_calls=[], usage=None),
     ])
     loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
@@ -186,14 +175,11 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path):
     assert session.metadata[GOAL_STATE_KEY]["status"] == "completed"
     first_request = provider.chat_stream_with_retry.await_args_list[0].kwargs["messages"]
     assert "staged migration plan" in str(first_request)
-    assert "/goal implement the plan above" in str(first_request)
+    assert "implement the plan above" in str(first_request)
     assert _GOAL_RUNTIME_GUIDANCE_TAG in str(first_request)
-    final_request = provider.chat_stream_with_retry.await_args_list[-1].kwargs["messages"]
-    assert "create_goal is unavailable for this turn" in str(final_request)
-    assert _GOAL_RUNTIME_GUIDANCE_TAG in str(session.messages[2]["content"])
-    assert _GOAL_RUNTIME_GUIDANCE_TAG not in str(
-        public_history_message(session.messages[2])["content"]
-    )
+    assert session.messages[2]["content"] == "/goal implement the plan above"
+    assert session.messages[3]["_hidden_history"] == {"kind": "goal_request"}
+    assert _GOAL_RUNTIME_GUIDANCE_TAG in str(session.messages[3]["content"])
 
 
 @pytest.mark.asyncio
@@ -465,39 +451,20 @@ async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp
 
 
 @pytest.mark.asyncio
-async def test_loop_stream_filter_hides_partial_trailing_think_prefix(tmp_path):
+@pytest.mark.parametrize(
+    "first_delta, second_delta",
+    [
+        pytest.param("Hello <thin", "k>hidden</think>World", id="partial_trailing_think_prefix"),
+        pytest.param("Hello <think>", "hidden</think>World", id="complete_trailing_think_tag"),
+    ],
+)
+async def test_loop_stream_filter_hides_split_think_tags(tmp_path, first_delta, second_delta):
     loop = _make_loop(tmp_path)
     deltas: list[str] = []
 
     async def chat_stream_with_retry(*, on_content_delta, **kwargs):
-        await on_content_delta("Hello <thin")
-        await on_content_delta("k>hidden</think>World")
-        return LLMResponse(content="Hello <think>hidden</think>World", tool_calls=[], usage=None)
-
-    loop.provider.chat_stream_with_retry = chat_stream_with_retry
-
-    async def on_stream(delta: str) -> None:
-        deltas.append(delta)
-
-    result = await loop._run_agent_loop(
-        TranscriptInput(history=[], current_message=None),
-        runtime=loop.llm_runtime(),
-        events=output_events(on_stream=on_stream),
-        streaming=True,
-    )
-
-    assert result.final_content == "Hello World"
-    assert deltas == ["Hello", " World"]
-
-
-@pytest.mark.asyncio
-async def test_loop_stream_filter_hides_complete_trailing_think_tag(tmp_path):
-    loop = _make_loop(tmp_path)
-    deltas: list[str] = []
-
-    async def chat_stream_with_retry(*, on_content_delta, **kwargs):
-        await on_content_delta("Hello <think>")
-        await on_content_delta("hidden</think>World")
+        await on_content_delta(first_delta)
+        await on_content_delta(second_delta)
         return LLMResponse(content="Hello <think>hidden</think>World", tool_calls=[], usage=None)
 
     loop.provider.chat_stream_with_retry = chat_stream_with_retry

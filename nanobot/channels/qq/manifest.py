@@ -15,7 +15,7 @@ SETUP_SPEC = ChannelSetupSpec(
         "streaming": field("bool", default=True),
         "sendProgress": field("bool", default=False),
         "sendToolHints": field("bool", default=False),
-        "showCompactionNotices": field("bool", default=False),
+        "showCompactionNotices": field("bool", inheritable=True),
         "mediaDir": field(),
         "downloadChunkSize": field("int", default=1024 * 256),
         "downloadMaxBytes": field("int", default=1024 * 1024 * 200),

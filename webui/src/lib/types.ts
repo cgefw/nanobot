@@ -1,5 +1,5 @@
 import type { ContextCompaction, NotificationEvent, RecoveryState, RetryStatus as WireRetryStatus } from "../../../packages/client-events/notifications";
-export type { RecoveryState, RecoveryStatus } from "../../../packages/client-events/notifications";
+export type { RecoveryState } from "../../../packages/client-events/notifications";
 
 type Role = "user" | "assistant" | "tool" | "system";
 
@@ -47,7 +47,7 @@ export interface UIMediaAttachment {
 
 interface UIMessageSource { kind: "cron" | "local_trigger" | "trigger" | string; label?: string; }
 
-export interface TurnUsage {
+interface TurnUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
@@ -71,7 +71,7 @@ export interface ResponseSource {
   fallback?: boolean;
 }
 
-export interface UITraceDetail {
+interface UITraceDetail {
   ref: string;
   bytes: number;
   traceCount: number;
@@ -389,7 +389,7 @@ export interface UIFileEdit {
   deleted: number;
   approximate?: boolean;
   status: "editing" | "done" | "error";
-  operation?: "edit" | "delete" | string;
+  operation?: "create" | "edit" | "delete" | string;
   binary?: boolean;
   error?: string;
   pending?: boolean;
@@ -1018,6 +1018,7 @@ export interface ChannelSetupContractField {
   choices: string[];
   required: boolean;
   default_value?: string;
+  inheritable?: boolean;
 }
 
 export interface ChannelSetupContract {
@@ -1027,7 +1028,7 @@ export interface ChannelSetupContract {
   verifies_connection?: boolean;
 }
 
-export interface ChannelSetupContractRequirement {
+interface ChannelSetupContractRequirement {
   alternatives: string[][];
 }
 
@@ -1607,15 +1608,22 @@ export interface WebuiThreadTraceDetailPayload {
   events: ThreadProjectionEvent[];
 }
 
-export interface FilePreviewPayload {
+export interface FileReferenceMetadata {
+  path: string;
+  relative_path: string | null;
+}
+
+interface FilePreviewMetadata {
   path: string;
   display_path: string;
   project_path: string;
-  language: string;
-  content: string;
   size: number;
-  truncated: boolean;
 }
+
+export type FilePreviewPayload = FilePreviewMetadata & (
+  | { kind?: "text"; language: string; content: string; truncated: boolean }
+  | { kind: "image"; mime_type: string; data_url: string }
+);
 
 export type Outbound =
   | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload }
