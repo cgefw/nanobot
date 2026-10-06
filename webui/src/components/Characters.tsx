@@ -74,7 +74,9 @@ function CardContent({ preview }: { preview: CardPreview }) {
     {preview.card.character_book && <p className="text-muted-foreground">
       {t("characters.lore", { count: preview.card.character_book.entries.length })}
     </p>}
-    {preview.warnings?.map((warning) => <p key={warning} className="text-amber-700 dark:text-amber-300">{warning}</p>)}
+    {preview.warnings?.map((warning) => <p key={warning} className="text-amber-700 dark:text-amber-300">
+      {t(`characters.warnings.${warning}`, { defaultValue: warning })}
+    </p>)}
   </div>;
 }
 
@@ -100,6 +102,14 @@ function CharacterSheet({ title, description, children, footer }: {
       {footer}
     </div>}
   </SheetContent>;
+}
+
+/** Localize a character error code from the gateway; other messages are shown as sent. */
+export function characterErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return /^[a-z][a-z0-9_]*$/.test(message)
+    ? i18n.t(`characters.errors.${message}`, { defaultValue: message })
+    : message;
 }
 
 export function CharacterSidebar() {
@@ -151,7 +161,7 @@ export function CharacterSidebar() {
       const role = await client.requestMutation<{ id: string }>("characters.create", draft);
       setDraft(EMPTY_AGENT); setMode(null);
       switchCharacter(role.id);
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { setError(characterErrorMessage(err)); }
     finally { setBusy(false); }
   }
 
@@ -173,7 +183,7 @@ export function CharacterSidebar() {
         ...payload, ...(updateId ? { id: updateId } : {}), preview: true,
       });
       upload.current = payload; setPreview(result);
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { setError(characterErrorMessage(err)); }
     finally { setBusy(false); }
   }
 
@@ -187,7 +197,7 @@ export function CharacterSidebar() {
       setCharacters(await listCharacters(getToken()));
       setPreview(null); upload.current = null;
       if (updateId) switchCharacter(updateId);
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { setError(characterErrorMessage(err)); }
     finally { setBusy(false); }
   }
 
@@ -288,7 +298,7 @@ function CharacterDetailsContent() {
   async function show() {
     setOpen(true); setError("");
     try { setPreview(await readJson<CardPreview>("/api/characters/current", getToken())); }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    catch (err) { setError(characterErrorMessage(err)); }
   }
   return <><Button variant="ghost" size="icon" aria-label={t("characters.profile")} title={t("characters.profile")} onClick={() => void show()}>
     <BookOpen className="h-4 w-4" />
@@ -300,7 +310,9 @@ function CharacterDetailsContent() {
         <SettingsGroup>{AGENT_FILES.map(([name, description]) => <SettingsRow key={name} title={name} description={t(description)}>
           <SettingsTextEditor title={name} description={t(description)} value={preview.files?.[name] ?? ""}
             onSave={async (content) => {
-              setPreview(await client.requestMutation<CardPreview>("agent.profile.update", { filename: name, content }));
+              try {
+                setPreview(await client.requestMutation<CardPreview>("agent.profile.update", { filename: name, content }));
+              } catch (err) { throw new Error(characterErrorMessage(err), { cause: err }); }
             }} />
         </SettingsRow>)}</SettingsGroup>
       </> : preview && <>

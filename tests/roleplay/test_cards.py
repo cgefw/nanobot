@@ -53,7 +53,7 @@ def test_png_card_metadata_after_image_data(keyword):
 def test_plain_png_explains_missing_character_data():
     raw = io.BytesIO()
     Image.new("RGB", (8, 8)).save(raw, "PNG")
-    with pytest.raises(ValueError, match="PNG 中未找到角色卡数据"):
+    with pytest.raises(ValueError, match="card_png_without_data"):
         parse_card(raw.getvalue(), "portrait.png")
 
 
@@ -81,7 +81,7 @@ def test_aicc_fields_survive_import_and_reload(tmp_path):
     assert profile.card.creator_notes == "Notes"
     assert profile.card.creator == "Author"
     assert profile.card.tags == ["friendly"]
-    assert any("AICC" in warning for warning in imported.warnings)
+    assert "aicc_partial" in imported.warnings
 
 
 @pytest.mark.parametrize("data", [None, [], {"name": "A", "personality": "invalid"},

@@ -243,6 +243,6 @@ async def test_shutdown_waits_for_current_start_and_releases_lease(manager, leas
     leases[0].release.assert_called_once()
     assert not manager._ports
     assert settings.load().roleplay.auto_start is True
-    with pytest.raises(ValueError, match="shutting down"):
+    with pytest.raises(ValueError, match="manager_shutting_down"):
         await manager.ensure_started(role_id)
     assert json.loads(settings.path.read_text())["roleplay"]["autoStart"] is True

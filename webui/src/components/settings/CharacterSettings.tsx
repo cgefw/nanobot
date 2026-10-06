@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listCharacters, type Character } from "@/components/Characters";
+import { characterErrorMessage, listCharacters, type Character } from "@/components/Characters";
 import { SettingsGroup, SettingsRow, SettingsSectionTitle, StatusPill } from "@/components/settings/shared/SettingsControls";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -20,7 +20,7 @@ export function CharacterSettings() {
     if (characterId()) { switchCharacter("", "/settings?section=characters"); return; }
     let active = true;
     void listCharacters(getToken()).then((items) => { if (active) setCharacters(items); })
-      .catch((err: unknown) => { if (active) setError(err instanceof Error ? err.message : String(err)); })
+      .catch((err: unknown) => { if (active) setError(characterErrorMessage(err)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [getToken]);
@@ -33,7 +33,7 @@ export function CharacterSettings() {
       setCharacters(result.characters);
       if (action === "delete") setDeleting(null);
       window.dispatchEvent(new Event("nanobot:characters-changed"));
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { setError(characterErrorMessage(err)); }
     finally { setBusy(""); }
   }
 

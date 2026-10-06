@@ -2281,6 +2281,40 @@
     "stopping": "Deteniendo…",
     "empty": "Aún no hay personajes. Crea uno o importa una tarjeta desde el menú de la barra lateral.",
     "deleteTitle": "¿Eliminar «{{name}}»?",
-    "deleteHelp": "Se detendrá el asistente y se eliminarán permanentemente la configuración, las instrucciones, las conversaciones, la memoria y los archivos adjuntos de su directorio. Esta acción no se puede deshacer."
+    "deleteHelp": "Se detendrá el asistente y se eliminarán permanentemente la configuración, las instrucciones, las conversaciones, la memoria y los archivos adjuntos de su directorio. Esta acción no se puede deshacer.",
+    "errors": {
+      "character_not_found": "Este personaje ya no existe.",
+      "character_id_invalid": "Personaje no válido.",
+      "character_limit_reached": "Se admiten como máximo 100 personajes.",
+      "agent_name_invalid": "Introduce un nombre de agente de 1 a 256 caracteres.",
+      "agent_file_unsupported": "Solo se pueden editar AGENTS.md, SOUL.md y USER.md.",
+      "agent_file_not_text": "Los archivos de instrucciones deben ser texto.",
+      "agent_files_too_large": "Los archivos de instrucciones pueden ocupar como máximo 1 MiB en total.",
+      "agent_file_outside_workspace": "Los archivos de instrucciones deben estar dentro del espacio de trabajo del agente.",
+      "agent_prompt_over_budget": "Las instrucciones superan el presupuesto de contexto del modelo actual. Acórtalas.",
+      "agent_file_update_invalid": "Elige un archivo de instrucciones e introduce su texto.",
+      "card_size_invalid": "Las tarjetas de personaje deben ocupar entre 1 byte y 8 MiB.",
+      "card_upload_invalid": "El archivo subido no es válido.",
+      "card_avatar_too_large": "La imagen de la tarjeta supera los 16 megapíxeles.",
+      "card_png_without_data": "No se encontraron datos de personaje (chara / ccv3) en este PNG. Usa el PNG o JSON original de la tarjeta; las capturas de pantalla y las imágenes guardadas de nuevo pueden no contenerlos.",
+      "card_png_invalid": "No es una tarjeta de personaje PNG válida.",
+      "card_data_too_large": "Los datos del personaje superan 1 MiB.",
+      "card_json_invalid": "La tarjeta de personaje no es un objeto JSON válido.",
+      "card_spec_unsupported": "Esta especificación de tarjeta de personaje no es compatible.",
+      "card_definition_over_budget": "La definición del personaje supera el presupuesto de contexto del modelo actual. Acorta la tarjeta.",
+      "card_greeting_over_budget": "Un saludo supera el presupuesto de contexto del modelo actual. Acorta la tarjeta.",
+      "card_update_target_invalid": "Solo se puede actualizar una tarjeta de personaje importada en esta instancia.",
+      "manager_shutting_down": "El servicio se está cerrando. Inténtalo de nuevo cuando se reinicie.",
+      "delete_outside_instance": "Solo se pueden eliminar personajes dentro del directorio de esta instancia.",
+      "delete_config_symlinked": "La configuración de este personaje apunta a otra ubicación, por lo que no se puede eliminar aquí.",
+      "delete_stop_failed": "El proceso del personaje no se detuvo, así que no se eliminó ningún dato. Inténtalo más tarde.",
+      "unknown_action": "Acción de personaje desconocida."
+    },
+    "warnings": {
+      "aicc_partial": "AICC: se convirtieron la configuración del personaje, los saludos y los campos básicos del lorebook; no se admiten los saludos de grupo ni la posición de los prompts de profundidad.",
+      "v3_basic_only": "V3: solo campos básicos del personaje; no se admiten recursos ni CHARX.",
+      "extensions_preserved": "Los campos de extensión se conservan, pero no se ejecutan scripts ni reglas avanzadas del lore.",
+      "recursive_lore_unsupported": "No se admite el escaneo recursivo del lore."
+    }
   }
 }

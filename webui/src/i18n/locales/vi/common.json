@@ -2280,6 +2280,40 @@
     "stopping": "Đang dừng…",
     "empty": "Chưa có nhân vật. Tạo nhân vật hoặc nhập thẻ từ menu ở thanh bên.",
     "deleteTitle": "Xóa “{{name}}”?",
-    "deleteHelp": "Trợ lý sẽ dừng và cấu hình, hướng dẫn, cuộc trò chuyện, bộ nhớ cùng tệp đính kèm trong thư mục riêng sẽ bị xóa vĩnh viễn. Không thể hoàn tác."
+    "deleteHelp": "Trợ lý sẽ dừng và cấu hình, hướng dẫn, cuộc trò chuyện, bộ nhớ cùng tệp đính kèm trong thư mục riêng sẽ bị xóa vĩnh viễn. Không thể hoàn tác.",
+    "errors": {
+      "character_not_found": "Nhân vật này không còn tồn tại.",
+      "character_id_invalid": "Nhân vật không hợp lệ.",
+      "character_limit_reached": "Hỗ trợ tối đa 100 nhân vật.",
+      "agent_name_invalid": "Nhập tên agent dài từ 1 đến 256 ký tự.",
+      "agent_file_unsupported": "Chỉ có thể chỉnh sửa AGENTS.md, SOUL.md và USER.md.",
+      "agent_file_not_text": "Tệp hướng dẫn phải là văn bản.",
+      "agent_files_too_large": "Tổng dung lượng các tệp hướng dẫn tối đa là 1 MiB.",
+      "agent_file_outside_workspace": "Tệp hướng dẫn phải nằm trong không gian làm việc của agent.",
+      "agent_prompt_over_budget": "Hướng dẫn vượt quá ngân sách ngữ cảnh của mô hình hiện tại. Hãy rút gọn.",
+      "agent_file_update_invalid": "Chọn một tệp hướng dẫn và nhập nội dung.",
+      "card_size_invalid": "Thẻ nhân vật phải có dung lượng từ 1 byte đến 8 MiB.",
+      "card_upload_invalid": "Tệp đã tải lên không hợp lệ.",
+      "card_avatar_too_large": "Ảnh thẻ vượt quá 16 megapixel.",
+      "card_png_without_data": "Không tìm thấy dữ liệu nhân vật (chara / ccv3) trong PNG này. Hãy dùng PNG hoặc JSON gốc của thẻ; ảnh chụp màn hình và ảnh đã lưu lại có thể không chứa dữ liệu nhân vật.",
+      "card_png_invalid": "Đây không phải thẻ nhân vật PNG hợp lệ.",
+      "card_data_too_large": "Dữ liệu nhân vật vượt quá 1 MiB.",
+      "card_json_invalid": "Thẻ nhân vật không phải là đối tượng JSON hợp lệ.",
+      "card_spec_unsupported": "Không hỗ trợ đặc tả thẻ nhân vật này.",
+      "card_definition_over_budget": "Thiết lập nhân vật vượt quá ngân sách ngữ cảnh của mô hình hiện tại. Hãy rút gọn thẻ.",
+      "card_greeting_over_budget": "Một lời chào vượt quá ngân sách ngữ cảnh của mô hình hiện tại. Hãy rút gọn thẻ.",
+      "card_update_target_invalid": "Chỉ có thể cập nhật thẻ nhân vật đã nhập trong phiên bản này.",
+      "manager_shutting_down": "Dịch vụ đang tắt. Hãy thử lại sau khi khởi động lại.",
+      "delete_outside_instance": "Chỉ có thể xóa nhân vật nằm trong thư mục của phiên bản này.",
+      "delete_config_symlinked": "Cấu hình của nhân vật này trỏ đến vị trí khác nên không thể xóa tại đây.",
+      "delete_stop_failed": "Tiến trình nhân vật chưa dừng nên chưa xóa dữ liệu nào. Hãy thử lại sau.",
+      "unknown_action": "Thao tác nhân vật không xác định."
+    },
+    "warnings": {
+      "aicc_partial": "AICC: đã chuyển đổi thiết lập nhân vật, lời chào và các trường lorebook cơ bản; không hỗ trợ lời chào nhóm và vị trí prompt theo độ sâu.",
+      "v3_basic_only": "V3: chỉ hỗ trợ các trường nhân vật cơ bản; không hỗ trợ tài nguyên và CHARX.",
+      "extensions_preserved": "Các trường mở rộng được giữ lại nhưng không chạy script và quy tắc lore nâng cao.",
+      "recursive_lore_unsupported": "Không hỗ trợ quét lore đệ quy."
+    }
   }
 }

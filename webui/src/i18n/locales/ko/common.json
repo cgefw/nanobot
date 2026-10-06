@@ -2280,6 +2280,40 @@
     "stopping": "중지하는 중…",
     "empty": "캐릭터가 없습니다. 사이드바 메뉴에서 캐릭터를 만들거나 카드를 가져오세요.",
     "deleteTitle": "“{{name}}”을(를) 삭제할까요?",
-    "deleteHelp": "어시스턴트를 중지하고 전용 디렉터리의 설정, 지침, 대화, 기억, 첨부 파일을 영구 삭제합니다. 이 작업은 취소할 수 없습니다."
+    "deleteHelp": "어시스턴트를 중지하고 전용 디렉터리의 설정, 지침, 대화, 기억, 첨부 파일을 영구 삭제합니다. 이 작업은 취소할 수 없습니다.",
+    "errors": {
+      "character_not_found": "캐릭터가 없거나 삭제되었습니다.",
+      "character_id_invalid": "캐릭터 ID가 올바르지 않습니다.",
+      "character_limit_reached": "캐릭터는 최대 100개까지 지원됩니다.",
+      "agent_name_invalid": "1–256자의 에이전트 이름을 입력하세요.",
+      "agent_file_unsupported": "AGENTS.md, SOUL.md, USER.md만 편집할 수 있습니다.",
+      "agent_file_not_text": "지침 파일은 텍스트여야 합니다.",
+      "agent_files_too_large": "지침 파일의 전체 크기는 1 MiB를 넘을 수 없습니다.",
+      "agent_file_outside_workspace": "지침 파일은 에이전트 작업 공간 안에 있어야 합니다.",
+      "agent_prompt_over_budget": "지침이 현재 모델의 컨텍스트 예산을 초과합니다. 내용을 줄이세요.",
+      "agent_file_update_invalid": "지침 파일을 선택하고 텍스트를 입력하세요.",
+      "card_size_invalid": "캐릭터 카드는 1바이트 이상 8 MiB 이하여야 합니다.",
+      "card_upload_invalid": "업로드한 파일이 올바르지 않습니다.",
+      "card_avatar_too_large": "카드 이미지가 1,600만 픽셀을 초과합니다.",
+      "card_png_without_data": "이 PNG에서 캐릭터 데이터(chara / ccv3)를 찾을 수 없습니다. 원본 카드 PNG 또는 JSON을 사용하세요. 스크린샷이나 다시 저장한 이미지에는 캐릭터 데이터가 없을 수 있습니다.",
+      "card_png_invalid": "올바른 PNG 캐릭터 카드가 아닙니다.",
+      "card_data_too_large": "캐릭터 데이터가 1 MiB를 초과합니다.",
+      "card_json_invalid": "캐릭터 카드가 올바른 JSON 객체가 아닙니다.",
+      "card_spec_unsupported": "지원하지 않는 캐릭터 카드 사양입니다.",
+      "card_definition_over_budget": "캐릭터 설정이 현재 모델의 컨텍스트 예산을 초과합니다. 카드를 줄이세요.",
+      "card_greeting_over_budget": "인사말이 현재 모델의 컨텍스트 예산을 초과합니다. 카드를 줄이세요.",
+      "card_update_target_invalid": "이 인스턴스에서 가져온 캐릭터 카드만 업데이트할 수 있습니다.",
+      "manager_shutting_down": "서비스가 종료 중입니다. 다시 시작된 후 다시 시도하세요.",
+      "delete_outside_instance": "이 인스턴스 디렉터리 안의 캐릭터만 삭제할 수 있습니다.",
+      "delete_config_symlinked": "이 캐릭터의 설정 파일이 다른 위치를 가리키므로 여기서 삭제할 수 없습니다.",
+      "delete_stop_failed": "캐릭터 프로세스가 중지되지 않아 데이터를 삭제하지 않았습니다. 잠시 후 다시 시도하세요.",
+      "unknown_action": "알 수 없는 캐릭터 작업입니다."
+    },
+    "warnings": {
+      "aicc_partial": "AICC: 캐릭터 설정, 인사말, 기본 로어북 필드를 변환했습니다. 그룹 인사말과 깊이 프롬프트 위치는 지원하지 않습니다.",
+      "v3_basic_only": "V3: 기본 캐릭터 필드만 지원하며 에셋과 CHARX는 지원하지 않습니다.",
+      "extensions_preserved": "확장 필드는 보존되지만 스크립트와 고급 로어 규칙은 실행되지 않습니다.",
+      "recursive_lore_unsupported": "로어 재귀 스캔은 지원하지 않습니다."
+    }
   }
 }
