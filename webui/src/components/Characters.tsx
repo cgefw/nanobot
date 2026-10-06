@@ -35,24 +35,47 @@ type CardPreview = {
   greetings?: string[];
 };
 
+class RequestError extends Error {
+  constructor(readonly status: number) {
+    super(i18n.t("characters.requestError", { status }));
+  }
+}
+
 async function readJson<T>(url: string, token: string): Promise<T> {
   const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(i18n.t("characters.requestError", { status: res.status }));
+  if (!res.ok) throw new RequestError(res.status);
   return res.json() as Promise<T>;
 }
 
-let parentCredentials: ReturnType<typeof fetchBootstrap> | undefined;
+type ParentToken = { value: string; expiresAt: number };
+let parentToken: ParentToken | undefined;
+let parentCredentials: Promise<ParentToken> | undefined;
+
+async function parentApiToken(): Promise<string> {
+  // Each parent bootstrap issues new tokens, so reuse the API token until it nears expiry.
+  if (parentToken && parentToken.expiresAt > Date.now()) return parentToken.value;
+  // Share concurrent lookups, but never retain failed parent bootstraps.
+  parentCredentials ??= fetchBootstrap(window.location.origin, loadSavedSecret())
+    .then((boot) => ({
+      value: boot.api_token ?? "",
+      expiresAt: Date.now() + Math.max(0, (boot.expires_in ?? 0) - 30) * 1000,
+    }))
+    .finally(() => { parentCredentials = undefined; });
+  parentToken = await parentCredentials;
+  return parentToken.value;
+}
+
 export async function listCharacters(token: string): Promise<Character[]> {
-  if (characterId()) {
-    // Share concurrent lookups, but never retain failed or expired parent tokens.
-    parentCredentials ??= fetchBootstrap(window.location.origin, loadSavedSecret())
-      .finally(() => { parentCredentials = undefined; });
-    token = (await parentCredentials).api_token ?? "";
+  const url = `${window.location.origin}/api/characters`;
+  if (!characterId()) return (await readJson<{ characters: Character[] }>(url, token)).characters;
+  try {
+    return (await readJson<{ characters: Character[] }>(url, await parentApiToken())).characters;
+  } catch (err) {
+    // A parent restart forgets issued tokens; authenticate again once.
+    if (!(err instanceof RequestError && err.status === 401)) throw err;
+    parentToken = undefined;
+    return (await readJson<{ characters: Character[] }>(url, await parentApiToken())).characters;
   }
-  const result = await readJson<{ characters: Character[] }>(
-    `${window.location.origin}/api/characters`, token,
-  );
-  return result.characters;
 }
 
 function CardContent({ preview }: { preview: CardPreview }) {
