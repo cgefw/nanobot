@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.qq.manifest import PLUGIN
 from nanobot.channels.qq.runtime import QQChannel, QQConfig
@@ -73,10 +72,8 @@ async def test_streaming_toggle_controls_agent_stream_request(channel, enabled):
 
 
 async def test_quiet_defaults_do_not_hide_the_final_answer(channel):
+    # ChannelManager applies these defaults unless sendProgress / sendToolHints are set.
     assert channel.progress_transport_defaults() == (False, False)
-    for event in [ProgressEvent(tool_hint=True), ProgressEvent(reasoning=True), ProgressEvent()]:
-        await channel.send(OutboundMessage(channel="qq", chat_id="u", content="internal", event=event))
-    channel._client.api.post_c2c_message.assert_not_awaited()
     await channel.send(OutboundMessage(channel="qq", chat_id="u", content="**Answer**\n\n- item"))
     payload = channel._client.api.post_c2c_message.call_args.kwargs
     assert payload["msg_type"] == 2
