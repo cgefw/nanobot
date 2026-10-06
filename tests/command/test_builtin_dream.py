@@ -21,6 +21,8 @@ from nanobot.utils.gitstore import CommitInfo
 
 
 class _FakeStore:
+    dream_channel = "cli"
+
     def __init__(
         self,
         git,
@@ -163,6 +165,7 @@ async def test_dream_no_history_explains_how_to_create_input(tmp_path) -> None:
 async def test_dream_internal_run_silences_progress(tmp_path) -> None:
     msg = InboundMessage(channel="feishu", sender_id="u1", chat_id="chat1", content="/dream")
     store = _FakeStore(_FakeGit(initialized=False), dream_prompt_result=("dream prompt", 123))
+    store.dream_channel = "dream"
     bus = _FakeBus()
     calls = []
 
@@ -191,6 +194,8 @@ async def test_dream_internal_run_silences_progress(tmp_path) -> None:
     assert len(calls) == 1
     assert callable(calls[0][1]["on_progress"])
     assert calls[0][1]["runtime"] is dream_runtime
+    # Manual runs maintain memory out of character, like the scheduled job.
+    assert calls[0][1]["channel"] == "dream"
 
 
 def _build_runnable_dream(

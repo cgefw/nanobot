@@ -160,6 +160,15 @@ async def test_dream_cannot_rewrite_character_or_skills(tmp_path):
     assert "fixed" in store._dream_template().lower()
 
 
+def test_dream_channel_keeps_memory_maintenance_out_of_character(tmp_path):
+    card = tmp_path / "card.json"
+    card.write_bytes(encoded_card(description="FIXED ROLE", post_history_instructions="After history"))
+    context = ContextBuilder(tmp_path, character_card=str(card))
+    assert context.memory.dream_channel != MemoryStore(tmp_path / "plain").dream_channel
+    dream = context.build_messages([], "consolidate", channel=context.memory.dream_channel)
+    assert all("FIXED ROLE" not in m["content"] and "After history" not in m["content"] for m in dream)
+
+
 def test_idle_disabled_does_not_scan_sessions():
     sessions = MagicMock()
     compact = AutoCompact(sessions, MagicMock())

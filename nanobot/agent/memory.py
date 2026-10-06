@@ -51,6 +51,10 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.utils.llm_runtime import LLMRuntime
 
+# Dream turns for a fixed character run outside the character's persona;
+# ContextBuilder omits the card from prompts built for this channel.
+DREAM_CHANNEL = "dream"
+
 # ---------------------------------------------------------------------------
 # MemoryStore — pure file I/O layer
 # ---------------------------------------------------------------------------
@@ -707,6 +711,11 @@ class MemoryStore:
     # ------------------------------------------------------------------
     # Dream helpers
     # ------------------------------------------------------------------
+
+    @property
+    def dream_channel(self) -> str:
+        """Channel for Dream turns; a fixed character maintains memory out of character."""
+        return DREAM_CHANNEL if self.fixed_character else "cli"
 
     @staticmethod
     def dream_session_key() -> str:
