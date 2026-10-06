@@ -424,7 +424,7 @@ class QQChannel(BaseChannel):
         stream_id: str | None = None, stream_end: bool = False,
         resuming: bool = False, merge_next: bool = False,
     ) -> None:
-        """Append answer text through QQ's C2C stream API; groups send one final answer."""
+        """Stream answer text through QQ's C2C stream API; groups send one final answer."""
         if not self._client:
             raise RuntimeError("QQ client not initialized")
         msg_id = (metadata or {}).get("message_id")
@@ -445,11 +445,13 @@ class QQChannel(BaseChannel):
         is_group = self._chat_type_cache.get(chat_id) == "group"
         fallback = is_group or not self.config.streaming or not msg_id or state.fallback
         if not fallback and (final or time.monotonic() - state.last_sent >= 0.5):
+            # QQ replaces the stream body with every frame and accepts only growing text,
+            # so each frame carries the full answer; the closing frame is never empty.
             payload: dict[str, Any] = {
-                "input_mode": "append", "input_state": 10 if final else 1,
+                "input_mode": "replace", "input_state": 10 if final else 1,
                 "index": state.index, "msg_seq": state.seq, "msg_id": msg_id,
                 "content_type": "markdown" if self.config.msg_format == "markdown" else "text",
-                "content_raw": "".join(state.parts[state.sent:]),
+                "content_raw": "".join(state.parts),
             }
             if state.remote_id:
                 payload["stream_msg_id"] = state.remote_id
