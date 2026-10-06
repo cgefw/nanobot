@@ -226,9 +226,6 @@ class CharacterManager:
         child.roleplay.auto_start = True
         child.roleplay.agent_name = ""
         child.gateway.heartbeat.enabled = False
-        for channel in (child.channels.model_extra or {}).values():
-            if isinstance(channel, dict):
-                channel["enabled"] = False
         from nanobot.channels.websocket.runtime import WebSocketConfig
 
         ws = WebSocketConfig.model_validate((parent.channels.model_extra or {}).get("websocket", {}))
@@ -236,8 +233,11 @@ class CharacterManager:
         ws.host, ws.port, ws.path = "127.0.0.1", free_port(), "/"
         ws.unix_socket_path = ws.public_ws_url = ws.ssl_certfile = ws.ssl_keyfile = ""
         issue_listener_credentials(ws)
+        # Keep the shared channel policy, but start with only the proxied WebUI listener
+        # and an empty QQ section: parent channel sections and their credentials stay put.
+        shared = child.channels.model_dump(exclude=set(child.channels.model_extra or {}))
         child.channels = type(child.channels).model_validate({
-            **child.channels.model_dump(), "websocket": ws.model_dump(by_alias=True),
+            **shared, "websocket": ws.model_dump(by_alias=True),
             "qq": channel_default_config(QQ_PLUGIN),
         })
         child.gateway.host = "127.0.0.1"
