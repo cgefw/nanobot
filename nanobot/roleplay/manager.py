@@ -25,7 +25,7 @@ from nanobot.roleplay.cards import MAX_UPLOAD_BYTES, CharacterProfile, parse_car
 from nanobot.webui.settings_services import WebUISettingsConfig
 
 if TYPE_CHECKING:
-    from nanobot.channels.websocket.runtime import TrustedProxyAuthConfig
+    from nanobot.channels.websocket.runtime import WebSocketConfig
 
 MAX_CHARACTERS = 100
 
@@ -36,16 +36,21 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def proxy_auth() -> TrustedProxyAuthConfig:
-    """Return a fresh assertion that only this parent's proxy can present.
+def issue_listener_credentials(ws: WebSocketConfig) -> None:
+    """Give a character listener fresh credentials that only the parent proxy holds.
 
-    Trusted-proxy auth checks only that the header is present, so the header
-    name carries a per-launch secret; any other local process reaching the
-    loopback listener still needs the normal bootstrap secret and tokens.
+    The parent applies its current bootstrap policy and allow-list before it
+    forwards, so the child never stores the parent's token or secret and a
+    parent restart cannot leave it with stale ones. Trusted-proxy auth checks
+    only that its header is present, so the header name carries the secret.
     """
     from nanobot.channels.websocket.runtime import TrustedProxyAuthConfig
 
-    return TrustedProxyAuthConfig(
+    ws.token = ""
+    ws.token_issue_secret = secrets.token_urlsafe(32)
+    ws.websocket_requires_token = True
+    ws.allow_from = ["*"]
+    ws.trusted_proxy_auth = TrustedProxyAuthConfig(
         trusted_peer_cidrs=["127.0.0.1/32"],
         assertion_header=f"X-Nanobot-Character-{secrets.token_hex(16)}",
     )
@@ -53,10 +58,17 @@ def proxy_auth() -> TrustedProxyAuthConfig:
 
 @dataclass(frozen=True)
 class CharacterEndpoint:
-    """Loopback listener of a running character and its proxy assertion header."""
+    """Loopback listener of a running character and the credentials its proxy presents."""
 
     port: int
     assertion_header: str
+    bootstrap_secret: str
+
+    @classmethod
+    def of(cls, ws: WebSocketConfig) -> CharacterEndpoint:
+        if ws.trusted_proxy_auth is None:
+            raise ValueError("Character gateway is running without proxy credentials; stop and reopen it")
+        return cls(ws.port, ws.trusted_proxy_auth.assertion_header, ws.token_issue_secret or ws.token)
 
 
 class CharacterManager:
@@ -223,8 +235,7 @@ class CharacterManager:
         ws.enabled = True
         ws.host, ws.port, ws.path = "127.0.0.1", free_port(), "/"
         ws.unix_socket_path = ws.public_ws_url = ws.ssl_certfile = ws.ssl_keyfile = ""
-        # The outer gateway verifies any original trusted-proxy assertion first.
-        ws.trusted_proxy_auth = proxy_auth()
+        issue_listener_credentials(ws)
         child.channels = type(child.channels).model_validate({
             **child.channels.model_dump(), "websocket": ws.model_dump(by_alias=True),
             "qq": channel_default_config(QQ_PLUGIN),
@@ -269,7 +280,6 @@ class CharacterManager:
 
             def start(_path: Path) -> CharacterEndpoint:
                 # Refresh only listener credentials; per-character model/tool settings persist.
-                parent = self.settings.load()
                 raw = json.loads(instance.config_path.read_text())
                 child = Config.model_validate(raw)
                 from nanobot.channels.websocket.runtime import WebSocketConfig
@@ -278,15 +288,8 @@ class CharacterManager:
                 lease.acquire()
                 # A primary-gateway restart may reattach before the orphan monitor stops it.
                 if runtime.status().running:
-                    if ws.trusted_proxy_auth is None:
-                        raise ValueError("Character gateway is running without proxy credentials; stop and reopen it")
-                    return CharacterEndpoint(ws.port, ws.trusted_proxy_auth.assertion_header)
-                parent_ws = WebSocketConfig.model_validate((parent.channels.model_extra or {}).get("websocket", {}))
-                ws.token = parent_ws.token
-                ws.token_issue_secret = parent_ws.token_issue_secret
-                ws.websocket_requires_token = parent_ws.websocket_requires_token
-                ws.allow_from = list(parent_ws.allow_from)
-                ws.trusted_proxy_auth = auth = proxy_auth()
+                    return CharacterEndpoint.of(ws)
+                issue_listener_credentials(ws)
                 ws.port = free_port()
                 child.channels = type(child.channels).model_validate({
                     **child.channels.model_dump(), "websocket": ws.model_dump(by_alias=True),
@@ -296,7 +299,7 @@ class CharacterManager:
                 if not result.status.running:
                     lease.release()
                     raise ValueError(f"Character failed to start: {result.message}")
-                return CharacterEndpoint(ws.port, auth.assertion_header)
+                return CharacterEndpoint.of(ws)
 
             try:
                 endpoint = await asyncio.to_thread(settings.run_serialized, start)

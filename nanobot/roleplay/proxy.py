@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
@@ -19,6 +20,8 @@ from nanobot.webui.http_utils import (
     http_json_response,
     http_response,
     is_trusted_proxy_authenticated_request,
+    parse_request_path,
+    query_first,
 )
 
 if TYPE_CHECKING:
@@ -36,14 +39,23 @@ class CharacterProxy:
         self.client = httpx.AsyncClient(trust_env=False, timeout=20)
         self.sockets: dict[ServerConnection, ClientConnection] = {}
 
-    async def dispatch(self, connection: ServerConnection, request: Request) -> Response | None:
+    async def dispatch(
+        self, connection: ServerConnection, request: Request, is_allowed: Callable[[str], bool],
+    ) -> Response | None:
         match = _ROUTE.fullmatch(request.path)
         if not match:
             return http_error(404, "Character route not found")
         role_id, path = match.groups()
+        websocket = "websocket" in request.headers.get("Upgrade", "").lower()
+        bootstrap = path.split("?", 1)[0] == "/webui/bootstrap"
+        if websocket:
+            # Characters accept any client id; the parent's current allow-list applies here.
+            client_id = query_first(parse_request_path(path)[1], "client_id") or ""
+            if not is_allowed(client_id[:128]):
+                return http_error(403, "Forbidden")
         try:
             self.manager.directory(role_id)
-            if path.split("?", 1)[0] == "/webui/bootstrap":
+            if bootstrap:
                 auth = self.http.character_bootstrap_auth(connection, request)
                 if auth.status_code != 200:
                     return auth
@@ -67,8 +79,12 @@ class CharacterProxy:
             headers["x-forwarded-host"] = request.headers.get("Host", "")
             if is_trusted_proxy_authenticated_request(connection, request.headers, self.http.config):
                 headers[assertion] = "authenticated"
+            if bootstrap:
+                # The parent authorized this bootstrap above; vouch for it with the child's secret.
+                headers.pop("x-nanobot-auth", None)
+                headers["authorization"] = f"Bearer {endpoint.bootstrap_secret}"
             upstream = f"127.0.0.1:{endpoint.port}"
-            if "websocket" in request.headers.get("Upgrade", "").lower():
+            if websocket:
                 socket = await connect(
                     f"ws://{upstream}{path}", additional_headers=headers, proxy=None,
                     max_size=self.http.config.max_message_bytes,
@@ -77,7 +93,7 @@ class CharacterProxy:
                 return None
             headers["Host"] = request.headers.get("Host", upstream)
             response = await self.client.get(f"http://{upstream}{path}", headers=headers)
-            if path.split("?", 1)[0] == "/webui/bootstrap" and response.status_code == 200:
+            if bootstrap and response.status_code == 200:
                 payload = response.json()
                 prefix = f"/_characters/{role_id}"
                 public = urlsplit(self.http.character_public_ws_url(request))
