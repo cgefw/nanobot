@@ -400,6 +400,12 @@ class GatewayHTTPHandler:
             AgentProfile(profile_config) if not card_path and profile_config.roleplay.agent_name else None
         )
         self.characters = None if self.character or self.agent_profile else CharacterManager(settings.config)
+        # A character instance is reached through the parent's /_characters/<id> proxy route.
+        instance_id = settings.config.path.parent.name
+        self.route_prefix = (
+            f"/_characters/{instance_id}"
+            if self.characters is None and re.fullmatch(r"[a-f0-9]{32}", instance_id) else ""
+        )
         from nanobot.webui.remote_instances import RemoteInstances
 
         self.remote_instances = RemoteInstances(
@@ -869,10 +875,7 @@ class GatewayHTTPHandler:
 
         public_ws_url = urlsplit(self._bootstrap_ws_url(request))
         scheme = "https" if public_ws_url.scheme == "wss" else "http"
-        path = MCP_OAUTH_CALLBACK_PATH
-        instance_id = self.settings.config.path.parent.name
-        if (self.character or self.agent_profile) and re.fullmatch(r"[a-f0-9]{32}", instance_id):
-            path = f"/_characters/{instance_id}{path}"
+        path = f"{self.route_prefix}{MCP_OAUTH_CALLBACK_PATH}"
         return urlunsplit((scheme, public_ws_url.netloc, path, "", ""))
 
     # -- Session routes -----------------------------------------------------

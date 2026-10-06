@@ -13,6 +13,7 @@ from nanobot.webui.ws_http import GatewayHTTPHandler
 def _handler(config: WebSocketConfig) -> GatewayHTTPHandler:
     handler = object.__new__(GatewayHTTPHandler)
     handler.config = config
+    handler.route_prefix = ""
     return handler
 
 
