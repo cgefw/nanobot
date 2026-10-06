@@ -13,7 +13,7 @@ from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 from websockets.http11 import Request, Response
 
-from nanobot.roleplay.manager import PROXY_HEADER, CharacterManager
+from nanobot.roleplay.manager import CharacterManager
 from nanobot.webui.http_utils import (
     http_error,
     http_json_response,
@@ -47,16 +47,17 @@ class CharacterProxy:
                 auth = self.http.character_bootstrap_auth(connection, request)
                 if auth.status_code != 200:
                     return auth
-                port = await self.manager.ensure_started(role_id)
+                endpoint = await self.manager.ensure_started(role_id)
             else:
-                port = self.manager.port(role_id)
-            if port is None:
+                endpoint = self.manager.endpoint(role_id)
+            if endpoint is None:
                 return http_error(409, "Character is stopped; open it again from Characters")
+            assertion = endpoint.assertion_header.lower()
             headers = {
                 key.lower(): value for key, value in request.headers.raw_items()
                 if key.lower() not in _HOP_HEADERS
                 and not key.lower().startswith("sec-websocket-")
-                and key.lower() != PROXY_HEADER.lower()
+                and key.lower() != assertion
             }
             # Append the actual peer; a forged loopback header cannot grant full access.
             peer = connection.remote_address
@@ -65,8 +66,8 @@ class CharacterProxy:
             headers["x-forwarded-for"] = f"{prior}, {peer_ip}" if prior else peer_ip
             headers["x-forwarded-host"] = request.headers.get("Host", "")
             if is_trusted_proxy_authenticated_request(connection, request.headers, self.http.config):
-                headers[PROXY_HEADER] = "authenticated"
-            upstream = f"127.0.0.1:{port}"
+                headers[assertion] = "authenticated"
+            upstream = f"127.0.0.1:{endpoint.port}"
             if "websocket" in request.headers.get("Upgrade", "").lower():
                 socket = await connect(
                     f"ws://{upstream}{path}", additional_headers=headers, proxy=None,

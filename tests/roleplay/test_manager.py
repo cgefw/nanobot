@@ -168,8 +168,8 @@ async def test_restore_filters_roles_and_isolates_failures(manager, leases, monk
     manager.start()
     assert manager._restore_task is task
     await task
-    assert manager.port(enabled) is not None
-    assert all(manager.port(role_id) is None for role_id in (broken, failed, disabled, paused))
+    assert manager.endpoint(enabled) is not None
+    assert all(manager.endpoint(role_id) is None for role_id in (broken, failed, disabled, paused))
     assert len(leases) == 1
     assert enabled_settings.load().channels.qq["secret"] == "${ROLE_QQ_SECRET}"
     await manager.close()
@@ -178,8 +178,8 @@ async def test_restore_filters_roles_and_isolates_failures(manager, leases, monk
 async def test_manual_stop_survives_restart_and_open_resumes(manager, leases):
     role_id, settings = add_role(manager)
     before = settings.load().channels.qq
-    ports = await asyncio.gather(manager.ensure_started(role_id), manager.ensure_started(role_id))
-    assert ports[0] == ports[1] and ports[0] is not None
+    endpoints = await asyncio.gather(manager.ensure_started(role_id), manager.ensure_started(role_id))
+    assert endpoints[0] == endpoints[1] and endpoints[0] is not None
     assert len(leases) == 1
     await manager.mutate("characters.stop", {"id": role_id})
     assert settings.load().roleplay.auto_start is False
@@ -189,9 +189,9 @@ async def test_manual_stop_survives_restart_and_open_resumes(manager, leases):
     restarted = CharacterManager(manager.settings)
     restarted.start()
     await restarted._restore_task
-    assert restarted.port(role_id) is None
+    assert restarted.endpoint(role_id) is None
     await restarted.mutate("characters.start", {"id": role_id})
-    assert restarted.port(role_id) is not None
+    assert restarted.endpoint(role_id) is not None
     assert settings.load().roleplay.auto_start is True
     await restarted.close()
     assert settings.load().roleplay.auto_start is True
@@ -199,7 +199,7 @@ async def test_manual_stop_survives_restart_and_open_resumes(manager, leases):
     restored = CharacterManager(manager.settings)
     restored.start()
     await restored._restore_task
-    assert restored.port(role_id) is not None
+    assert restored.endpoint(role_id) is not None
     assert settings.load().channels.qq == before
     await restored.close()
     assert all(lease.release.call_count == 1 for lease in leases)
@@ -241,7 +241,7 @@ async def test_shutdown_waits_for_current_start_and_releases_lease(manager, leas
     await asyncio.wait_for(closing, timeout=5)
     assert len(leases) == 1
     leases[0].release.assert_called_once()
-    assert not manager._ports
+    assert not manager._endpoints
     assert settings.load().roleplay.auto_start is True
     with pytest.raises(ValueError, match="shutting down"):
         await manager.ensure_started(role_id)
