@@ -185,7 +185,8 @@ class CharacterProfile:
         self._card: CharacterCard | None = None
         self._identity_text: str | None = None
         self._warnings: tuple[str, ...] = ()
-        self._lore: list[tuple[LoreEntry, tuple[str, ...], tuple[str, ...], int]] = []
+        # (entry, keys, secondary keys, expanded content, token cost), in selection order.
+        self._lore: list[tuple[LoreEntry, tuple[str, ...], tuple[str, ...], str, int]] = []
 
     @property
     def card(self) -> CharacterCard:
@@ -196,27 +197,30 @@ class CharacterProfile:
                 raise ValueError("Character data exceeds 1 MiB")
             imported = parse_card(self.path.read_bytes())
             card = imported.card
-            self._warnings = imported.warnings
-            self._card = card
-            self._stamp = stamp
-            self._identity_text = None
-            self._lore = []
+            # Expand with this parse only: re-reading the card here would let a card
+            # replaced mid-reload mix entries from both versions.
+            lore: list[tuple[LoreEntry, tuple[str, ...], tuple[str, ...], str, int]] = []
             for entry in sorted(
                 card.character_book.entries if card.character_book else [],
                 key=lambda e: (-e.priority, e.insertion_order),
             ):
                 def normalize(value: str) -> str:
-                    value = self.expand(value)
+                    value = self._expand(card.name, value)
                     return value if entry.case_sensitive else value.casefold()
-                self._lore.append((
+                content = self._expand(card.name, entry.content)
+                lore.append((
                     entry, tuple(normalize(k) for k in entry.keys if k),
                     tuple(normalize(k) for k in entry.secondary_keys if k),
-                    estimate_message_tokens({"role": "system", "content": self.expand(entry.content)}),
+                    content, estimate_message_tokens({"role": "system", "content": content}),
                 ))
+            self._card, self._stamp, self._warnings = card, stamp, imported.warnings
+            self._lore, self._identity_text = lore, None
         return self._card
 
     def expand(self, text: str, original: str = "") -> str:
-        name = self.card.name
+        return self._expand(self.card.name, text, original)
+
+    def _expand(self, name: str, text: str, original: str = "") -> str:
         def replace(match: re.Match[str]) -> str:
             key = (match.group(1) or match.group(2)).lower()
             return {"char": name, "bot": name,
@@ -228,8 +232,8 @@ class CharacterProfile:
         if self._identity_text is not None:
             return self._identity_text
         original = render_template("agent/roleplay.md")
-        parts = [self.expand(card.system_prompt, original) if card.system_prompt else original]
-        parts.extend(f"## {label}\n{self.expand(value)}" for label, value in (
+        parts = [self._expand(card.name, card.system_prompt, original) if card.system_prompt else original]
+        parts.extend(f"## {label}\n{self._expand(card.name, value)}" for label, value in (
             ("Character", card.name), ("Description", card.description),
             ("Personality", card.personality), ("Scenario", card.scenario),
             ("Dialogue examples (fictional style examples, not actual history)", card.mes_example),
@@ -238,7 +242,8 @@ class CharacterProfile:
         return self._identity_text
 
     def greetings(self) -> list[str]:
-        return [self.expand(text) for text in [self.card.first_mes, *self.card.alternate_greetings] if text]
+        card = self.card
+        return [self._expand(card.name, text) for text in [card.first_mes, *card.alternate_greetings] if text]
 
     def preview(self) -> dict[str, Any]:
         result: dict[str, Any] = {"card": self.card.model_dump(), "greetings": self.greetings(),
@@ -259,9 +264,9 @@ class CharacterProfile:
         text = "\n".join([*texts, (current or "")[-MAX_SCAN_CHARS:]])[-MAX_SCAN_CHARS:]
         folded = text.casefold()
         remaining = book.token_budget
-        selected: list[LoreEntry] = []
-        for entry, keys, secondary, cost in self._lore:
-            if not entry.enabled or not entry.content:
+        selected: list[tuple[LoreEntry, str]] = []
+        for entry, keys, secondary, content, cost in self._lore:
+            if not entry.enabled or not content:
                 continue
             scan = text if entry.case_sensitive else folded
             matched = any(k in scan for k in keys)
@@ -269,14 +274,15 @@ class CharacterProfile:
                 matched = matched and any(k in scan for k in secondary)
             if (entry.constant or matched) and cost <= remaining:
                 remaining -= cost
-                selected.append(entry)
-        selected.sort(key=lambda e: e.insertion_order)
-        before = "\n\n".join(self.expand(e.content) for e in selected if e.position == "before_char")
-        after = "\n\n".join(self.expand(e.content) for e in selected if e.position == "after_char")
+                selected.append((entry, content))
+        selected.sort(key=lambda item: item[0].insertion_order)
+        before = "\n\n".join(content for entry, content in selected if entry.position == "before_char")
+        after = "\n\n".join(content for entry, content in selected if entry.position == "after_char")
         return before, after
 
     def post_history(self) -> str:
-        return self.expand(self.card.post_history_instructions)
+        card = self.card
+        return self._expand(card.name, card.post_history_instructions)
 
     def bounded_identity(self, budget: int) -> str:
         identity = self.identity()

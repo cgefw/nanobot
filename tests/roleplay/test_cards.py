@@ -12,6 +12,7 @@ from PIL import Image, PngImagePlugin
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
+from nanobot.roleplay import cards
 from nanobot.roleplay.cards import MAX_CARD_BYTES, CharacterProfile, parse_card
 from nanobot.roleplay.manager import CharacterManager
 from nanobot.webui.settings_services import WebUISettingsConfig
@@ -129,6 +130,29 @@ def test_cached_card_lore_and_fixed_identity(tmp_path, monkeypatch):
     assert "WITH MILK" in after and "ALWAYS" in after and "OLD MATCH" not in after
     assert profile.greetings() == ["Hi Bob", "Welcome"]
     assert "Alice knows Bob" in profile.identity()
+
+
+def test_card_replaced_during_reload_never_mixes_lore(tmp_path, monkeypatch):
+    def book(tag):
+        return {"entries": [{"constant": True, "content": f"{tag}-{i}", "insertion_order": i}
+                            for i in range(3)]}
+
+    card = tmp_path / "card.json"
+    card.write_bytes(encoded_card(character_book=book("OLD")))
+    profile = CharacterProfile(card)
+    estimate = cards.estimate_message_tokens
+    replaced = []
+
+    def update_card_once(message):
+        # "Update character card" lands while a turn is still loading the old card.
+        if not replaced:
+            replaced.append(True)
+            card.write_bytes(encoded_card("Bob", character_book=book("NEW")))
+        return estimate(message)
+
+    monkeypatch.setattr(cards, "estimate_message_tokens", update_card_once)
+    assert profile.lore([], "")[1] == "OLD-0\n\nOLD-1\n\nOLD-2"
+    assert profile.lore([], "")[1] == "NEW-0\n\nNEW-1\n\nNEW-2"
 
 
 def test_context_preserves_tools_but_replaces_soul(tmp_path):
