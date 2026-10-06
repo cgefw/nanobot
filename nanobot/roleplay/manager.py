@@ -7,6 +7,7 @@ import base64
 import json
 import shutil
 import socket
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ class CharacterManager:
         self.settings = settings
         self.root = settings.path.parent / "characters"
         self._entries: dict[str, dict[str, str]] | None = None
+        self._entries_lock = threading.Lock()
         self._leases: dict[str, GatewayClientLease] = {}
         self._ports: dict[str, int] = {}
         self._lock = asyncio.Lock()
@@ -59,22 +61,30 @@ class CharacterManager:
                 logger.warning("Character {} could not be restored ({})", role_id, type(exc).__name__)
 
     def entries(self) -> dict[str, dict[str, str]]:
-        if self._entries is None:
-            self._entries = {}
-            if self.root.exists():
-                for path in sorted(self.root.glob("*/config.json")):
-                    if len(self._entries) >= MAX_CHARACTERS:
-                        break
-                    try:
-                        uuid.UUID(hex=path.parent.name)
-                        card_path = path.with_name("card.json")
-                        name = (CharacterProfile(card_path).card.name if card_path.exists()
-                                else Config.model_validate_json(path.read_text()).roleplay.agent_name)
-                        if name:
-                            self._entries[path.parent.name] = {"id": path.parent.name, "name": name}
-                    except (ValueError, OSError):
-                        continue
-        return self._entries
+        # Restore, listing, and routing may load from different threads at startup;
+        # publish only a complete scan so no caller sees a partial registry.
+        with self._entries_lock:
+            if self._entries is None:
+                self._entries = self._scan_entries()
+            return self._entries
+
+    def _scan_entries(self) -> dict[str, dict[str, str]]:
+        entries: dict[str, dict[str, str]] = {}
+        if not self.root.exists():
+            return entries
+        for path in sorted(self.root.glob("*/config.json")):
+            if len(entries) >= MAX_CHARACTERS:
+                break
+            try:
+                uuid.UUID(hex=path.parent.name)
+                card_path = path.with_name("card.json")
+                name = (CharacterProfile(card_path).card.name if card_path.exists()
+                        else Config.model_validate_json(path.read_text()).roleplay.agent_name)
+                if name:
+                    entries[path.parent.name] = {"id": path.parent.name, "name": name}
+            except (ValueError, OSError):
+                continue
+        return entries
 
     def directory(self, role_id: str) -> Path:
         if role_id not in self.entries():
