@@ -282,6 +282,10 @@ class Session:
         for message in sliced:
             if message.get("_command") or is_summary_checkpoint(message):
                 continue
+            # System prompts are rebuilt for every request. Earlier roleplay builds
+            # persisted per-turn card instructions as system turns; never replay them.
+            if message.get("role") == "system":
+                continue
             has_persisted_runtime_context = isinstance(
                 message.get(RUNTIME_CONTEXT_HISTORY_META),
                 dict,
