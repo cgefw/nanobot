@@ -45,10 +45,16 @@ def charx(files):
     return raw.getvalue()
 
 
-def test_png_metadata_avatar_and_v2(tmp_path):
+@pytest.mark.parametrize("write", [
+    lambda info, text: info.add_text("chara", text),
+    lambda info, text: info.add_text("chara", text, zip=True),
+    lambda info, text: info.add_itxt("chara", text),
+    lambda info, text: info.add_itxt("chara", text, zip=True),
+], ids=["tEXt", "zTXt", "iTXt", "compressed-iTXt"])
+def test_png_metadata_avatar_and_v2(write):
     data = {"spec": "chara_card_v2", "data": {"name": "Alice", "first_mes": "Hello {{user}}"}}
     metadata = PngImagePlugin.PngInfo()
-    metadata.add_text("chara", base64.b64encode(json.dumps(data).encode()).decode())
+    write(metadata, base64.b64encode(json.dumps(data).encode()).decode())
     raw = io.BytesIO()
     Image.new("RGB", (1024, 768)).save(raw, "PNG", pnginfo=metadata)
     imported = parse_card(raw.getvalue(), "alice.png")
@@ -222,6 +228,14 @@ def test_v3_macros_expand_once_per_load(tmp_path):
     # The welcome preview and the greeting saved for a new chat must agree.
     assert profile.greetings() == [greeting]
     assert CharacterProfile(card, "Bob").greetings()[0].split("|")[1] == picked
+
+
+def test_saved_cards_with_null_in_formerly_untyped_fields_still_load(tmp_path):
+    card = tmp_path / "card.json"
+    card.write_bytes(encoded_card(character_book={"extensions": None, "entries": [
+        {"keys": ["tea"], "content": "Likes tea", "use_regex": None, "extensions": None, "priority": None},
+    ]}, assets=[{"type": "icon", "uri": "ccdefault:", "name": None, "ext": None}]))
+    assert CharacterProfile(card).prompt([], "tea").definition.endswith("Likes tea")
 
 
 def test_cached_card_lore_and_fixed_identity(tmp_path, monkeypatch):

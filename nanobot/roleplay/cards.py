@@ -19,7 +19,7 @@ from typing import Any, Literal, NamedTuple
 
 import regex
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationInfo, field_validator
 
 from nanobot.utils.helpers import estimate_message_tokens, truncate_text_to_tokens
 from nanobot.utils.prompt_templates import render_template
@@ -47,6 +47,17 @@ _REGEX_FLAGS = {"i": regex.IGNORECASE, "m": regex.MULTILINE, "s": regex.DOTALL}
 _SLOTS = ("before_char", "before_desc", "after_desc", "personality", "scenario", "after_char", "closing")
 
 
+def _null_as_default(model: type[BaseModel], value: Any, info: ValidationInfo) -> Any:
+    """Read null as the field default.
+
+    Earlier releases kept fields such as ``use_regex`` and ``extensions`` as
+    untyped extras, so saved cards may hold null there and must still load.
+    """
+    if value is None and info.field_name is not None:
+        return model.model_fields[info.field_name].get_default(call_default_factory=True)
+    return value
+
+
 class LoreEntry(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
@@ -63,10 +74,10 @@ class LoreEntry(BaseModel):
     position: Literal["before_char", "after_char"] = "after_char"
     extensions: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("priority", mode="before")
+    @field_validator("priority", "use_regex", "extensions", mode="before")
     @classmethod
-    def default_priority(cls, value: Any) -> Any:
-        return 0 if value is None else value
+    def null_as_default(cls, value: Any, info: ValidationInfo) -> Any:
+        return _null_as_default(cls, value, info)
 
 
 class CharacterBook(BaseModel):
@@ -78,6 +89,11 @@ class CharacterBook(BaseModel):
     recursive_scanning: bool = False
     extensions: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("extensions", mode="before")
+    @classmethod
+    def null_as_default(cls, value: Any, info: ValidationInfo) -> Any:
+        return _null_as_default(cls, value, info)
+
 
 class CardAsset(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
@@ -86,6 +102,11 @@ class CardAsset(BaseModel):
     uri: str
     name: str = ""
     ext: str = ""
+
+    @field_validator("name", "ext", mode="before")
+    @classmethod
+    def null_as_default(cls, value: Any, info: ValidationInfo) -> Any:
+        return _null_as_default(cls, value, info)
 
 
 # Card V3: without an asset list, the container image itself is the main icon.
@@ -294,8 +315,26 @@ def read_card(source: bytes) -> tuple[CharacterCard, tuple[str, ...]]:
     return card, tuple(warnings)
 
 
+def _png_text(kind: bytes, data: bytes) -> bytes:
+    """Return the text of a tEXt, zTXt, or iTXt chunk after its keyword."""
+    compressed = kind == b"zTXt"
+    if compressed:
+        data = data[1:]  # Compression method.
+    elif kind == b"iTXt":
+        compressed = data[:1] == b"\1"
+        # Compression flag and method, language tag, translated keyword, text.
+        data = data[2:].split(b"\0", 2)[-1]
+    if not compressed:
+        return data
+    try:
+        # One byte over the limit is enough for the size check to reject it.
+        return zlib.decompressobj().decompress(data, MAX_CARD_BYTES * 2 + 1)
+    except zlib.error as exc:
+        raise ValueError("card_png_invalid") from exc
+
+
 def _png_card_text(raw: bytes) -> bytes:
-    """Return the decoded ccv3 (preferred) or chara tEXt payload.
+    """Return the decoded ccv3 (preferred) or chara text chunk payload.
 
     Walk the chunks directly so data written after APNG frames is still found.
     """
@@ -308,10 +347,10 @@ def _png_card_text(raw: bytes) -> bytes:
             raise ValueError("card_png_invalid")
         if kind == b"IEND":
             break
-        if kind == b"tEXt":
+        if kind in (b"tEXt", b"zTXt", b"iTXt"):
             keyword, _, text = raw[position + 8:end].partition(b"\0")
-            if keyword in (b"ccv3", b"chara"):
-                found.setdefault(keyword, text)
+            if keyword in (b"ccv3", b"chara") and keyword not in found:
+                found[keyword] = _png_text(kind, text)
         position = end + 4
     encoded = found.get(b"ccv3") or found.get(b"chara")
     if not encoded:
@@ -403,8 +442,10 @@ def parse_card(raw: bytes, filename: str = "card.json") -> ImportedCard:
 class _Macros:
     """Curly-braced syntax for one card load.
 
-    Random values are drawn once per load, so a greeting preview, the saved
-    greeting, and the cached system prompt agree until the card changes.
+    Random values are drawn once per load: the greeting preview and the
+    greeting saved for a new chat agree, and the system prompt stays stable
+    for prompt caching. Every new chat gets the same values until the card
+    changes or the process restarts.
     """
 
     def __init__(self, char: str, user: str) -> None:
