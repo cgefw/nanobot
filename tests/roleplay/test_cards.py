@@ -228,6 +228,8 @@ def test_v3_macros_expand_once_per_load(tmp_path):
     # The welcome preview and the greeting saved for a new chat must agree.
     assert profile.greetings() == [greeting]
     assert CharacterProfile(card, "Bob").greetings()[0].split("|")[1] == picked
+    profile.reroll_greetings()
+    assert profile.greetings()[0].split("|")[1] == picked
 
 
 def test_saved_cards_with_null_in_formerly_untyped_fields_still_load(tmp_path):

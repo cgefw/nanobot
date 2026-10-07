@@ -13,7 +13,7 @@ import time
 import zipfile
 import zlib
 from bisect import bisect_left
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -440,12 +440,10 @@ def parse_card(raw: bytes, filename: str = "card.json") -> ImportedCard:
 
 
 class _Macros:
-    """Curly-braced syntax for one card load.
+    """Curly-braced syntax with its own random draws.
 
-    Random values are drawn once per load: the greeting preview and the
-    greeting saved for a new chat agree, and the system prompt stays stable
-    for prompt caching. Every new chat gets the same values until the card
-    changes or the process restarts.
+    The profile expands the system prompt once per card load, keeping it
+    stable for prompt caching, and greetings once per new chat.
     """
 
     def __init__(self, char: str, user: str) -> None:
@@ -602,10 +600,22 @@ class CharacterProfile:
             (macros(card.system_prompt, original) if card.system_prompt else original, character,
              macros(card.description), macros(card.personality), macros(card.scenario),
              macros(card.mes_example)),
-            tuple(macros(text) for text in [card.first_mes, *card.alternate_greetings] if text),
+            self._greetings(card),
             macros(card.post_history_instructions),
             tuple(lore),
         )
+
+    def _greetings(self, card: CharacterCard) -> tuple[str, ...]:
+        macros = _Macros(card.nickname or card.name, self.user_name)
+        return tuple(macros(text) for text in [card.first_mes, *card.alternate_greetings] if text)
+
+    def reroll_greetings(self) -> None:
+        """Draw new random values for the next chat once a greeting has been saved.
+
+        Until then the welcome preview and the saved greeting stay the same text.
+        """
+        state = self._load()
+        self._state = replace(state, greetings=self._greetings(state.card))
 
     @property
     def card(self) -> CharacterCard:
