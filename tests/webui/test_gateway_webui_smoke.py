@@ -420,6 +420,11 @@ async def test_character_process_proxy_auth_and_isolated_greeting(tmp_path: Path
     config_path = tmp_path / "config.json"
     log_path = tmp_path / "characters.log"
     _write_smoke_config(config_path, workspace=workspace, ws_port=ws_port, gateway_port=_free_port())
+    config = json.loads(config_path.read_text())
+    config["channels"]["websocket"]["trustedProxyAuth"] = {
+        "trustedPeerCidrs": ["127.0.0.1/32"], "assertionHeader": "X-Auth-User",
+    }
+    config_path.write_text(json.dumps(config))
     process = _start_gateway(config_path, log_path)
     base = f"http://127.0.0.1:{ws_port}"
     try:
@@ -476,6 +481,18 @@ async def test_character_process_proxy_auth_and_isolated_greeting(tmp_path: Path
                             "X-Nanobot-Character-Proxy": "forged",
                         })
                         assert forged.status_code == 401
+                        # The outer trusted-proxy assertion still reaches the character.
+                        proxied = await http.get(f"{prefix}/api/sessions", headers={"X-Auth-User": "owner"})
+                        assert proxied.status_code == 200
+                        # Other local processes cannot bypass the main gateway's secret.
+                        child_config = json.loads((tmp_path / "characters" / role_id / "config.json").read_text())
+                        direct = f'127.0.0.1:{child_config["channels"]["websocket"]["port"]}'
+                        for header in ("X-Nanobot-Character-Proxy", "X-Auth-User"):
+                            bypass = await http.get(f"http://{direct}/webui/bootstrap", headers={header: "x"})
+                            assert bypass.status_code == 401
+                            with pytest.raises(websockets.InvalidStatus):
+                                async with websockets.connect(f"ws://{direct}/", additional_headers={header: "x"}):
+                                    pass
                 for role_id in ids:
                     await mutate("characters.stop", {"id": role_id})
                     stopped = await http.get(f"{base}/_characters/{role_id}/api/sessions")

@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import secrets
 import shutil
 import socket
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -22,7 +24,9 @@ from nanobot.roleplay.agents import AgentProfile, agent_files
 from nanobot.roleplay.cards import MAX_UPLOAD_BYTES, CharacterProfile, parse_card
 from nanobot.webui.settings_services import WebUISettingsConfig
 
-PROXY_HEADER = "X-Nanobot-Character-Proxy"
+if TYPE_CHECKING:
+    from nanobot.channels.websocket.runtime import TrustedProxyAuthConfig
+
 MAX_CHARACTERS = 100
 
 
@@ -32,13 +36,36 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def proxy_auth() -> TrustedProxyAuthConfig:
+    """Return a fresh assertion that only this parent's proxy can present.
+
+    Trusted-proxy auth checks only that the header is present, so the header
+    name carries a per-launch secret; any other local process reaching the
+    loopback listener still needs the normal bootstrap secret and tokens.
+    """
+    from nanobot.channels.websocket.runtime import TrustedProxyAuthConfig
+
+    return TrustedProxyAuthConfig(
+        trusted_peer_cidrs=["127.0.0.1/32"],
+        assertion_header=f"X-Nanobot-Character-{secrets.token_hex(16)}",
+    )
+
+
+@dataclass(frozen=True)
+class CharacterEndpoint:
+    """Loopback listener of a running character and its proxy assertion header."""
+
+    port: int
+    assertion_header: str
+
+
 class CharacterManager:
     def __init__(self, settings: WebUISettingsConfig) -> None:
         self.settings = settings
         self.root = settings.path.parent / "characters"
         self._entries: dict[str, dict[str, str]] | None = None
         self._leases: dict[str, GatewayClientLease] = {}
-        self._ports: dict[str, int] = {}
+        self._endpoints: dict[str, CharacterEndpoint] = {}
         self._lock = asyncio.Lock()
         self._restore_task: asyncio.Task[None] | None = None
         self._closing = False
@@ -83,12 +110,12 @@ class CharacterManager:
 
     def listing(self) -> dict[str, Any]:
         return {"characters": [
-            {**entry, "running": role_id in self._ports}
+            {**entry, "running": role_id in self._endpoints}
             for role_id, entry in self.entries().items()
         ]}
 
-    def port(self, role_id: str) -> int | None:
-        return self._ports.get(role_id)
+    def endpoint(self, role_id: str) -> CharacterEndpoint | None:
+        return self._endpoints.get(role_id)
 
     def details(self, role_id: str) -> dict[str, Any]:
         directory = self.directory(role_id)
@@ -190,16 +217,14 @@ class CharacterManager:
         for channel in (child.channels.model_extra or {}).values():
             if isinstance(channel, dict):
                 channel["enabled"] = False
-        from nanobot.channels.websocket.runtime import TrustedProxyAuthConfig, WebSocketConfig
+        from nanobot.channels.websocket.runtime import WebSocketConfig
 
         ws = WebSocketConfig.model_validate((parent.channels.model_extra or {}).get("websocket", {}))
         ws.enabled = True
         ws.host, ws.port, ws.path = "127.0.0.1", free_port(), "/"
         ws.unix_socket_path = ws.public_ws_url = ws.ssl_certfile = ws.ssl_keyfile = ""
         # The outer gateway verifies any original trusted-proxy assertion first.
-        ws.trusted_proxy_auth = TrustedProxyAuthConfig(
-            trusted_peer_cidrs=["127.0.0.1/32"], assertion_header=PROXY_HEADER,
-        )
+        ws.trusted_proxy_auth = proxy_auth()
         child.channels = type(child.channels).model_validate({
             **child.channels.model_dump(), "websocket": ws.model_dump(by_alias=True),
             "qq": channel_default_config(QQ_PLUGIN),
@@ -217,7 +242,9 @@ class CharacterManager:
             save_config(child, path)
         return True
 
-    async def ensure_started(self, role_id: str, *, automatic: bool = False) -> int | None:
+    async def ensure_started(
+        self, role_id: str, *, automatic: bool = False,
+    ) -> CharacterEndpoint | None:
         async with self._lock:
             if self._closing:
                 raise ValueError("Character manager is shutting down")
@@ -228,19 +255,19 @@ class CharacterManager:
                 settings.run_serialized, lambda path: self._prepare_start(path, automatic),
             ):
                 return None
-            if role_id in self._ports:
+            if role_id in self._endpoints:
                 lease = self._leases[role_id]
                 status = await asyncio.to_thread(lease.runtime.status)
                 if status.running:
-                    return self._ports[role_id]
+                    return self._endpoints[role_id]
                 await asyncio.to_thread(lease.release)
                 self._leases.pop(role_id)
-                self._ports.pop(role_id)
+                self._endpoints.pop(role_id)
             instance = GatewayInstance.resolve(config_path=directory / "config.json")
             runtime = GatewayRuntime(paths=instance.paths)
             lease = GatewayClientLease(runtime, kind="character-manager")
 
-            def start(_path: Path) -> int:
+            def start(_path: Path) -> CharacterEndpoint:
                 # Refresh only listener credentials; per-character model/tool settings persist.
                 parent = self.settings.load()
                 raw = json.loads(instance.config_path.read_text())
@@ -251,12 +278,15 @@ class CharacterManager:
                 lease.acquire()
                 # A primary-gateway restart may reattach before the orphan monitor stops it.
                 if runtime.status().running:
-                    return ws.port
+                    if ws.trusted_proxy_auth is None:
+                        raise ValueError("Character gateway is running without proxy credentials; stop and reopen it")
+                    return CharacterEndpoint(ws.port, ws.trusted_proxy_auth.assertion_header)
                 parent_ws = WebSocketConfig.model_validate((parent.channels.model_extra or {}).get("websocket", {}))
                 ws.token = parent_ws.token
                 ws.token_issue_secret = parent_ws.token_issue_secret
                 ws.websocket_requires_token = parent_ws.websocket_requires_token
                 ws.allow_from = list(parent_ws.allow_from)
+                ws.trusted_proxy_auth = auth = proxy_auth()
                 ws.port = free_port()
                 child.channels = type(child.channels).model_validate({
                     **child.channels.model_dump(), "websocket": ws.model_dump(by_alias=True),
@@ -266,31 +296,31 @@ class CharacterManager:
                 if not result.status.running:
                     lease.release()
                     raise ValueError(f"Character failed to start: {result.message}")
-                return ws.port
+                return CharacterEndpoint(ws.port, auth.assertion_header)
 
             try:
-                port = await asyncio.to_thread(settings.run_serialized, start)
+                endpoint = await asyncio.to_thread(settings.run_serialized, start)
             except BaseException:
                 await asyncio.to_thread(lease.release)
                 raise
             self._leases[role_id] = lease
-            self._ports[role_id] = port
+            self._endpoints[role_id] = endpoint
             try:
                 async with asyncio.timeout(15):
                     while True:
                         try:
-                            _, writer = await asyncio.open_connection("127.0.0.1", port)
+                            _, writer = await asyncio.open_connection("127.0.0.1", endpoint.port)
                             writer.close()
                             await writer.wait_closed()
                             break
                         except OSError:
                             await asyncio.sleep(0.1)
             except BaseException:
-                self._ports.pop(role_id, None)
+                self._endpoints.pop(role_id, None)
                 self._leases.pop(role_id, None)
                 await asyncio.to_thread(lease.release)
                 raise
-            return port
+            return endpoint
 
     async def stop(self, role_id: str, *, persist: bool = True) -> None:
         async with self._lock:
@@ -305,7 +335,7 @@ class CharacterManager:
                     WebUISettingsConfig(directory / "config.json").run_serialized, pause,
                 )
             lease = self._leases.pop(role_id, None)
-            self._ports.pop(role_id, None)
+            self._endpoints.pop(role_id, None)
             if lease:
                 await asyncio.to_thread(lease.release)
 
@@ -336,7 +366,7 @@ class CharacterManager:
             if lease:
                 await asyncio.to_thread(lease.release)
             self._leases.pop(role_id, None)
-            self._ports.pop(role_id, None)
+            self._endpoints.pop(role_id, None)
             # Only remove this instance directory; do not follow configured workspace paths.
             if directory.exists():
                 await asyncio.to_thread(shutil.rmtree, directory)
