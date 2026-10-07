@@ -61,7 +61,7 @@ class WebUIGatewayEndpoint:
         """Route one listener request to a WS handshake or the HTTP application."""
         if request.path.startswith("/_characters/"):
             if self.character_proxy:
-                return await self.character_proxy.dispatch(connection, request)
+                return await self.character_proxy.dispatch(connection, request, is_allowed)
             return connection.respond(404, "Character management is unavailable")
         got, query = parse_request_path(request.path)
         expected_ws = normalize_config_path(self._config.path)

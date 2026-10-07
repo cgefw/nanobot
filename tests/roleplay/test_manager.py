@@ -148,6 +148,23 @@ def test_new_role_does_not_inherit_qq_account_or_shared_session(manager):
     assert manager.settings.path.read_bytes() == parent_before
 
 
+def test_role_listener_never_stores_parent_credentials(manager):
+    def configure_parent(config):
+        config.channels.websocket = {
+            "enabled": True, "token": "parent-token", "tokenIssueSecret": "parent-secret",
+            "allowFrom": ["owner"], "websocketRequiresToken": False,
+        }
+
+    manager.settings.update(configure_parent)
+    role_id = manager.import_card({"data": base64.b64encode(b'{"name":"Bob"}').decode()})["id"]
+    raw = (manager.directory(role_id) / "config.json").read_text()
+    assert "parent-token" not in raw and "parent-secret" not in raw
+    listener = json.loads(raw)["channels"]["websocket"]
+    assert listener["tokenIssueSecret"] and listener["websocketRequiresToken"] is True
+    # The parent proxy applies its own allow-list before forwarding.
+    assert listener["allowFrom"] == ["*"]
+
+
 async def test_restore_filters_roles_and_isolates_failures(manager, leases, monkeypatch):
     broken, broken_settings = add_role(manager)
     broken_settings.path.write_text("{broken")

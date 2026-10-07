@@ -487,6 +487,11 @@ async def test_character_process_proxy_auth_and_isolated_greeting(tmp_path: Path
                         # Other local processes cannot bypass the main gateway's secret.
                         child_config = json.loads((tmp_path / "characters" / role_id / "config.json").read_text())
                         direct = f'127.0.0.1:{child_config["channels"]["websocket"]["port"]}'
+                        # Only the parent proxy holds the character's bootstrap secret.
+                        assert _BOOTSTRAP_SECRET not in json.dumps(child_config)
+                        parent_secret = await http.get(f"http://{direct}/webui/bootstrap",
+                                                       headers={"X-Nanobot-Auth": _BOOTSTRAP_SECRET})
+                        assert parent_secret.status_code == 401
                         for header in ("X-Nanobot-Character-Proxy", "X-Auth-User"):
                             bypass = await http.get(f"http://{direct}/webui/bootstrap", headers={header: "x"})
                             assert bypass.status_code == 401
