@@ -12,7 +12,6 @@ from PIL import Image, PngImagePlugin
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
-from nanobot.roleplay import cards
 from nanobot.roleplay.cards import MAX_CARD_BYTES, CharacterProfile, parse_card
 from nanobot.roleplay.manager import CharacterManager
 from nanobot.webui.settings_services import WebUISettingsConfig
@@ -133,6 +132,8 @@ def test_cached_card_lore_and_fixed_identity(tmp_path, monkeypatch):
 
 
 def test_card_replaced_during_reload_never_mixes_lore(tmp_path, monkeypatch):
+    from nanobot.roleplay.cards import estimate_message_tokens
+
     def book(tag):
         return {"entries": [{"constant": True, "content": f"{tag}-{i}", "insertion_order": i}
                             for i in range(3)]}
@@ -140,7 +141,6 @@ def test_card_replaced_during_reload_never_mixes_lore(tmp_path, monkeypatch):
     card = tmp_path / "card.json"
     card.write_bytes(encoded_card(character_book=book("OLD")))
     profile = CharacterProfile(card)
-    estimate = cards.estimate_message_tokens
     replaced = []
 
     def update_card_once(message):
@@ -148,9 +148,9 @@ def test_card_replaced_during_reload_never_mixes_lore(tmp_path, monkeypatch):
         if not replaced:
             replaced.append(True)
             card.write_bytes(encoded_card("Bob", character_book=book("NEW")))
-        return estimate(message)
+        return estimate_message_tokens(message)
 
-    monkeypatch.setattr(cards, "estimate_message_tokens", update_card_once)
+    monkeypatch.setattr("nanobot.roleplay.cards.estimate_message_tokens", update_card_once)
     assert profile.lore([], "")[1] == "OLD-0\n\nOLD-1\n\nOLD-2"
     assert profile.lore([], "")[1] == "NEW-0\n\nNEW-1\n\nNEW-2"
 
