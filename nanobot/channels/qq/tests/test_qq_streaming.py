@@ -84,7 +84,7 @@ async def test_quiet_defaults_do_not_hide_the_final_answer(channel):
     assert "content" not in payload
 
 
-async def test_stream_appends_and_finalizes_without_repeating_answer(channel, monkeypatch):
+async def test_stream_replaces_growing_text_and_finalizes_once(channel, monkeypatch):
     monkeypatch.setattr("nanobot.channels.qq.runtime.time.monotonic", lambda: 10)
     metadata = {"message_id": "m"}
     await channel.send_delta("u", "**Hello", metadata, stream_id="s")
@@ -94,11 +94,21 @@ async def test_stream_appends_and_finalizes_without_repeating_answer(channel, mo
     calls = channel._client.api._http.request.call_args_list
     assert calls[0].args[0].url.endswith("/v2/users/u/stream_messages")
     first, last = [call.kwargs["json"] for call in calls]
-    assert first == {"input_mode": "append", "input_state": 1, "index": 0, "msg_seq": 2,
+    assert first == {"input_mode": "replace", "input_state": 1, "index": 0, "msg_seq": 2,
                      "msg_id": "m", "content_type": "markdown", "content_raw": "**Hello"}
     assert last == {**first, "input_state": 10, "index": 1,
-                    "stream_msg_id": "remote", "content_raw": " world**"}
+                    "stream_msg_id": "remote", "content_raw": "**Hello world**"}
     assert not channel._streams
+    channel._client.api.post_c2c_message.assert_not_awaited()
+
+
+async def test_stream_end_without_new_text_closes_with_the_full_answer(channel):
+    metadata = {"message_id": "m"}
+    await channel.send_delta("u", "Done.", metadata, stream_id="s")
+    await channel.send_delta("u", "", metadata, stream_id="s", stream_end=True)
+    first, last = [call.kwargs["json"] for call in channel._client.api._http.request.call_args_list]
+    assert first["input_state"] == 1 and last["input_state"] == 10
+    assert first["content_raw"] == last["content_raw"] == "Done."
     channel._client.api.post_c2c_message.assert_not_awaited()
 
 
