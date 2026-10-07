@@ -4,6 +4,8 @@ import asyncio
 import base64
 import io
 import json
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -62,6 +64,28 @@ async def test_update_png_replaces_avatar_in_the_same_instance(manager):
         assert avatar.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
         assert "chara" not in avatar.info
     assert not list(manager.root.glob(".import-*"))
+
+
+def test_concurrent_startup_scan_never_exposes_a_partial_registry(manager, monkeypatch):
+    ids = {manager.import_card({"data": base64.b64encode(b'{"name":"Alice"}').decode()})["id"]
+           for _ in range(3)}
+    fresh = CharacterManager(manager.settings)
+    started = threading.Event()
+    profile = CharacterProfile
+
+    def slow_profile(path, *args):
+        # The restore thread is still parsing cards when a request needs the registry.
+        if not started.is_set():
+            started.set()
+            time.sleep(0.2)
+        return profile(path, *args)
+
+    monkeypatch.setattr("nanobot.roleplay.manager.CharacterProfile", slow_profile)
+    restore = threading.Thread(target=fresh.entries)
+    restore.start()
+    assert started.wait(5)
+    assert set(fresh.entries()) == ids
+    restore.join()
 
 
 @pytest.mark.parametrize("role_id", [None, "../escape", 12])
