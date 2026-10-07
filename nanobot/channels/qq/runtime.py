@@ -38,7 +38,7 @@ from loguru import logger
 from pydantic import Field
 
 from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ContextCompactionEvent, ProgressEvent
+from nanobot.bus.outbound_events import ContextCompactionEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Base
@@ -242,12 +242,12 @@ class QQChannel(BaseChannel):
         self._msg_seq: int = 1  # used to avoid QQ API dedup
         self._chat_type_cache: dict[str, str] = {}
         self._streams: dict[tuple[str, str], _QQStream] = {}
-        self.send_progress = config.send_progress
-        self.send_tool_hints = config.send_tool_hints
 
         self._media_root: Path = self._init_media_root()
 
     def progress_transport_defaults(self) -> tuple[bool, bool]:
+        # ChannelManager gates progress and tool hints (sendProgress / sendToolHints);
+        # QQ has no in-place edit, so both default to off. Reasoning never reaches send().
         return False, False
 
     # ---------------------------
@@ -331,11 +331,6 @@ class QQChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send attachments first, then text."""
-        if isinstance(msg.event, ProgressEvent):
-            event = msg.event
-            if (event.reasoning or event.reasoning_delta or event.reasoning_end
-                    or not (self.send_tool_hints if event.tool_hint else self.send_progress)):
-                return
         # Compaction notices assume the channel can update one message in place
         # (Telegram/Discord edit their notice; WebSocket projects it as status).
         # QQ's C2C/group API has no edit or recall endpoint, so by default the
