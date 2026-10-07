@@ -44,13 +44,13 @@ describe("character card drop import", () => {
     const confirm = await screen.findByRole("button", { name: "确认更新" });
     expect(requestMutation).toHaveBeenCalledWith("characters.update", {
       id, filename: "role.json", data: btoa('{"name":"Dropped"}'), preview: true,
-    });
+    }, 120_000);
     expect(switchCharacter).not.toHaveBeenCalled();
     fireEvent.click(confirm);
     await waitFor(() => expect(switchCharacter).toHaveBeenCalledWith(id));
     expect(requestMutation).toHaveBeenLastCalledWith("characters.update", {
       id, filename: "role.json", data: btoa('{"name":"Dropped"}'),
-    });
+    }, 120_000);
   });
 
   it("localizes the update page and keeps a failed update open for retry", async () => {
@@ -73,9 +73,23 @@ describe("character card drop import", () => {
     const zone = openImport();
     fireEvent.drop(zone, { dataTransfer: { files: [cardFile()] } });
     expect(await screen.findByRole("alert")).toHaveTextContent("PNG 中未找到角色卡数据（chara / ccv3）");
-    requestMutation.mockResolvedValueOnce({ ...preview, warnings: ["v3_basic_only"] });
+    requestMutation.mockResolvedValueOnce({ ...preview, warnings: ["lore_decorators_ignored"] });
     fireEvent.drop(zone, { dataTransfer: { files: [cardFile()] } });
-    expect(await screen.findByText("V3：仅支持基础角色字段，不支持资源和 CHARX。")).toBeInTheDocument();
+    expect(await screen.findByText("部分世界书装饰器（如按聊天计数激活、开场白条件）不受支持，已忽略。")).toBeInTheDocument();
+  });
+
+  it("previews CHARX cards with creator notes in the interface language", async () => {
+    requestMutation.mockResolvedValueOnce({ card: {
+      name: "Dropped", creator_notes: "English notes", creator_notes_multilingual: { zh: "中文说明" },
+    } });
+    const zone = openImport();
+    const file = new File(["PK"], "role.charx");
+    fireEvent.drop(zone, { dataTransfer: { files: [file] } });
+    expect(await screen.findByText("中文说明")).toBeInTheDocument();
+    expect(screen.queryByText("English notes")).not.toBeInTheDocument();
+    expect(requestMutation).toHaveBeenCalledWith("characters.import", {
+      filename: "role.charx", data: btoa("PK"), preview: true,
+    }, 120_000);
   });
 
   it("previews a dropped file and waits for confirmation before importing", async () => {
@@ -89,16 +103,16 @@ describe("character card drop import", () => {
     expect(requestMutation).toHaveBeenCalledOnce();
     expect(requestMutation).toHaveBeenCalledWith("characters.import", {
       filename: "role.json", data: btoa('{"name":"Dropped"}'), preview: true,
-    });
+    }, 120_000);
     fireEvent.click(confirm);
     await waitFor(() => expect(requestMutation).toHaveBeenCalledTimes(2));
     expect(requestMutation).toHaveBeenLastCalledWith("characters.import", {
       filename: "role.json", data: btoa('{"name":"Dropped"}'),
-    });
+    }, 120_000);
   });
 
   it.each([
-    [[new File(["text"], "role.txt")], "请选择 JSON 或 PNG 角色卡"],
+    [[new File(["text"], "role.txt")], "请选择 JSON、PNG 或 CHARX 角色卡"],
     [[cardFile(), cardFile()], "每次只能导入一张角色卡"],
   ])("rejects invalid drops without starting an import", async (files, message) => {
     const zone = openImport();

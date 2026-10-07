@@ -41,6 +41,8 @@ dependencies = [
     "qrcode[pil]>=8.0",
     # Character-card PNG parsing and avatar cleanup (nanobot/roleplay/cards.py).
     "pillow>=10.1.0,<13.0.0",
+    # Character-card lore regex keys need a match timeout (nanobot/roleplay/cards.py).
+    "regex>=2022.1.18",
     "croniter>=6.0.0,<7.0.0",
     "prompt-toolkit>=3.0.50,<4.0.0",
     "setproctitle>=1.3.7,<2.0.0; sys_platform != 'win32'",

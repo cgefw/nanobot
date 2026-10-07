@@ -2,6 +2,8 @@ import base64
 import io
 import json
 import struct
+import time
+import zipfile
 import zlib
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +27,24 @@ def encoded_card(name="Alice", **fields):
     return json.dumps({"name": name, **fields}).encode()
 
 
+def v3_card(**data):
+    return json.dumps({"spec": "chara_card_v3", "spec_version": "3.0", "data": {"name": "Alice", **data}}).encode()
+
+
+def text_chunk(keyword, source):
+    payload = keyword.encode() + b"\0" + base64.b64encode(source)
+    return struct.pack(">I", len(payload)) + b"tEXt" + payload + struct.pack(">I", zlib.crc32(b"tEXt" + payload))
+
+
+def charx(files):
+    raw = io.BytesIO()
+    with zipfile.ZipFile(raw, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in files.items():
+            # A fixed timestamp keeps parametrized test IDs identical across xdist workers.
+            archive.writestr(zipfile.ZipInfo(name, (2024, 1, 1, 0, 0, 0)), data)
+    return raw.getvalue()
+
+
 def test_png_metadata_avatar_and_v2(tmp_path):
     data = {"spec": "chara_card_v2", "data": {"name": "Alice", "first_mes": "Hello {{user}}"}}
     metadata = PngImagePlugin.PngInfo()
@@ -44,11 +64,8 @@ def test_png_card_metadata_after_image_data(keyword):
     raw = io.BytesIO()
     Image.new("RGB", (8, 8)).save(raw, "PNG")
     source = encoded_card()
-    payload = keyword.encode() + b"\0" + base64.b64encode(source)
-    chunk = struct.pack(">I", len(payload)) + b"tEXt" + payload
-    chunk += struct.pack(">I", zlib.crc32(b"tEXt" + payload))
     png = raw.getvalue()
-    imported = parse_card(png[:-12] + chunk + png[-12:], "late.png")
+    imported = parse_card(png[:-12] + text_chunk(keyword, source) + png[-12:], "late.png")
     assert imported.source == source
     assert imported.card.name == "Alice"
     assert imported.avatar
@@ -81,7 +98,7 @@ def test_aicc_fields_survive_import_and_reload(tmp_path):
     ))
     assert profile.greetings() == ["Hi 用户", "Welcome"]
     assert profile.post_history() == "After"
-    assert profile.lore([], "tea")[1] == "Likes tea"
+    assert profile.prompt([], "tea").definition.endswith("Likes tea")
     assert profile.card.creator_notes == "Notes"
     assert profile.card.creator == "Author"
     assert profile.card.tags == ["friendly"]
@@ -99,6 +116,7 @@ def test_invalid_aicc_fields_are_rejected(data):
     (b"{}", "x.png"), (b"[]", "x.json"), (b"broken", "x.json"),
     (encoded_card() + b" " * MAX_CARD_BYTES, "x.json"),
     (b'{"spec":"unknown","data":{"name":"A"}}', "x.json"),
+    (b"not a zip", "x.charx"), (charx({"cards/card.json": v3_card()}), "x.charx"),
 ])
 def test_invalid_import_is_rejected(raw, filename):
     with pytest.raises(ValueError):
@@ -106,11 +124,104 @@ def test_invalid_import_is_rejected(raw, filename):
 
 
 def test_v3_preserves_extra_fields_and_warns():
-    raw = json.dumps({"spec": "chara_card_v3", "data": {"name": "A", "assets": [],
-        "extensions": {"script": "do not execute"}}}).encode()
+    raw = json.dumps({"spec": "chara_card_v3", "spec_version": "3.5", "data": {
+        "name": "A", "extensions": {"script": "do not execute"}, "source": ["https://example.com/a"],
+        "assets": [{"type": "icon", "uri": "https://example.com/a.png", "name": "main", "ext": "png"}],
+    }}).encode()
     parsed = parse_card(raw)
     assert parsed.source == raw
-    assert len(parsed.warnings) == 2
+    assert parsed.avatar is None
+    assert parsed.warnings == ("v3_newer_version", "assets_unused", "extensions_preserved")
+
+
+def test_charx_card_uses_main_icon_and_nickname(tmp_path):
+    icon = io.BytesIO()
+    Image.new("RGB", (1024, 256), "red").save(icon, "WEBP")
+    source = v3_card(name="Alice Liddell", nickname="Alice", first_mes="{{char}} waves at <user>",
+                     group_only_greetings=["Hello everyone"], assets=[
+        {"type": "icon", "uri": "embeded://assets/icon/images/main.webp", "name": "main", "ext": "webp"},
+        {"type": "background", "uri": "embeded://assets/background/images/bg.png", "name": "main", "ext": "png"},
+    ])
+    imported = parse_card(charx({"card.json": source, "assets/icon/images/main.webp": icon.getvalue()}), "a.charx")
+    assert imported.source == source
+    assert Image.open(io.BytesIO(imported.avatar)).size == (512, 128)
+    assert imported.warnings == ("assets_unused",)
+    path = tmp_path / "card.json"
+    path.write_bytes(imported.source)
+    profile = CharacterProfile(path, "Bob")
+    assert profile.greetings() == ["Alice waves at Bob"]
+    assert "## Character\nAlice Liddell\nNickname: Alice" in profile.identity()
+
+
+def test_apng_prefers_ccv3_written_after_frames():
+    raw = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(raw, "PNG", save_all=True, append_images=[Image.new("RGB", (8, 8), "white")])
+    png = raw.getvalue()
+    chunks = text_chunk("chara", encoded_card("Backfilled")) + text_chunk("ccv3", v3_card())
+    imported = parse_card(png[:-12] + chunks + png[-12:], "animated.png")
+    assert imported.card.name == "Alice"
+    assert imported.avatar
+
+
+def test_v3_lore_regex_keys_and_decorators(tmp_path):
+    entries = [
+        {"keys": ["/dra(gon|ke)s?/i"], "use_regex": True, "content": "REGEX"},
+        # SillyTavern marks every entry use_regex and selective, even plain keys without secondary keys.
+        {"keys": ["tavern"], "use_regex": True, "selective": True, "content": "ST PLAIN"},
+        {"keys": ["/(unclosed/"], "use_regex": True, "content": "INVALID"},
+        {"keys": ["ancient"], "content": "SHALLOW"},
+        {"keys": ["ancient"], "content": "@@scan_depth 2\nDEEP"},
+        {"keys": ["tea"], "content": "@@exclude_keys coffee\nEXCLUDED"},
+        {"keys": ["tea"], "content": "@@additional_keys cake, scone\nWITH CAKE"},
+        {"keys": ["tea"], "content": "@@additional_keys pie\nWITHOUT PIE"},
+        {"content": "@@activate\n\nFORCED"},
+        {"constant": True, "content": "@@dont_activate\nNEVER"},
+        {"keys": ["tea"], "content": "@@position after_desc\nAFTER DESC"},
+        {"keys": ["tea"], "content": "@@position personality\nIN PERSONALITY"},
+        {"keys": ["tea"], "content": "@@depth 0\n@@role system\nRECENT"},
+        {"keys": ["tea"], "content": "@@activate_only_after 3\n@@@position before_desc\nFALLBACK"},
+    ]
+    card = tmp_path / "card.json"
+    card.write_bytes(v3_card(description="DESC", personality="PERS", post_history_instructions="AFTER",
+                             character_book={"scan_depth": 0, "entries": entries}))
+    profile = CharacterProfile(card)
+    prompt = profile.prompt([{"role": "user", "content": "ancient"}, {"role": "assistant", "content": "Hm"}],
+                            "Dragons at the tavern: tea, cake and coffee")
+    assert ("## Character\nAlice\n\nFALLBACK\n\n## Description\nDESC\n\nAFTER DESC\n\n"
+            "## Personality\nPERS\n\nIN PERSONALITY") in prompt.definition
+    assert prompt.definition.endswith("\n\n---\n\nREGEX\n\nST PLAIN\n\nDEEP\n\nWITH CAKE\n\nFORCED")
+    assert prompt.closing == "RECENT\n\nAFTER"
+    assert all(text not in prompt.definition for text in ("INVALID", "SHALLOW", "EXCLUDED", "PIE", "NEVER", "@@"))
+    assert "lore_decorators_ignored" not in parse_card(card.read_bytes()).warnings
+    entries.append({"keys": ["tea"], "content": "@@is_greeting 1\nGREETING ONLY"})
+    assert "lore_decorators_ignored" in parse_card(v3_card(character_book={"entries": entries})).warnings
+
+
+def test_lore_regex_keys_cannot_stall_a_turn(tmp_path, monkeypatch):
+    monkeypatch.setattr("nanobot.roleplay.cards.REGEX_BUDGET_S", 0.05)
+    card = tmp_path / "card.json"
+    card.write_bytes(v3_card(character_book={"entries": [
+        {"keys": ["/(x+x+)+y/"], "use_regex": True, "content": f"SLOW {i}"} for i in range(20)
+    ]}))
+    started = time.monotonic()
+    assert "SLOW" not in CharacterProfile(card).prompt([], "x" * 5000).definition
+    assert time.monotonic() - started < 2
+
+
+def test_v3_macros_expand_once_per_load(tmp_path):
+    card = tmp_path / "card.json"
+    card.write_bytes(v3_card(nickname="Ally", first_mes=(
+        "{{random:a\\,b,c}}|{{pick::x::y}}|{{roll:d6}}|{{reverse:{{char}}}}|"
+        "{{// hidden}}{{comment: note}}{{hidden_key:key}}|<char>|{{getvar::{{user}}}}"
+    )))
+    profile = CharacterProfile(card, "Bob")
+    greeting = profile.greetings()[0]
+    chosen, picked, roll, reverse, removed, legacy, unknown = greeting.split("|")
+    assert chosen in {"a,b", "c"} and picked in {"x", "y"} and 1 <= int(roll) <= 6
+    assert (reverse, removed, legacy, unknown) == ("yllA", "", "Ally", "{{getvar::Bob}}")
+    # The welcome preview and the greeting saved for a new chat must agree.
+    assert profile.greetings() == [greeting]
+    assert CharacterProfile(card, "Bob").greetings()[0].split("|")[1] == picked
 
 
 def test_cached_card_lore_and_fixed_identity(tmp_path, monkeypatch):
@@ -127,10 +238,11 @@ def test_cached_card_lore_and_fixed_identity(tmp_path, monkeypatch):
     first = profile.card
     monkeypatch.setattr(Path, "read_bytes", lambda _: pytest.fail("unchanged card was reparsed"))
     assert profile.card is first
-    before, after = profile.lore([{"role": "user", "content": "ancient"},
-                                 {"role": "assistant", "content": "tea"}], "milk")
+    prompt = profile.prompt([{"role": "user", "content": "ancient"},
+                             {"role": "assistant", "content": "tea"}], "milk").definition
+    before, after = prompt.split("\n\n---\n\n")[::2]
     assert before == "Alice loves tea"
-    assert "WITH MILK" in after and "ALWAYS" in after and "OLD MATCH" not in after
+    assert "WITH MILK" in after and "ALWAYS" in after and "OLD MATCH" not in prompt
     assert profile.greetings() == ["Hi Bob", "Welcome"]
     assert "Alice knows Bob" in profile.identity()
 
@@ -155,14 +267,15 @@ def test_card_replaced_during_reload_never_mixes_lore(tmp_path, monkeypatch):
         return estimate_message_tokens(message)
 
     monkeypatch.setattr("nanobot.roleplay.cards.estimate_message_tokens", update_card_once)
-    assert profile.lore([], "")[1] == "OLD-0\n\nOLD-1\n\nOLD-2"
-    assert profile.lore([], "")[1] == "NEW-0\n\nNEW-1\n\nNEW-2"
+    assert profile.prompt([], "").definition.endswith("---\n\nOLD-0\n\nOLD-1\n\nOLD-2")
+    assert profile.prompt([], "").definition.endswith("---\n\nNEW-0\n\nNEW-1\n\nNEW-2")
 
 
 def test_context_preserves_tools_but_replaces_soul(tmp_path):
     card = tmp_path / "card.json"
     card.write_bytes(encoded_card(description="FIXED ROLE", system_prompt="{{original}}\nCustom role",
-                                  post_history_instructions="After history"))
+                                  post_history_instructions="After history", character_book={"entries": [
+                                      {"keys": ["hi"], "content": "@@depth 0\nRecent lore"}]}))
     (tmp_path / "SOUL.md").write_text("WRONG SOUL")
     context = ContextBuilder(tmp_path, character_card=str(card))
     messages = context.build_messages([], "hi")
@@ -170,7 +283,7 @@ def test_context_preserves_tools_but_replaces_soul(tmp_path):
     assert "WRONG SOUL" not in messages[0]["content"]
     assert "Custom role" in messages[0]["content"]
     assert context.skills is not None
-    assert messages[0]["content"].endswith("After history")
+    assert messages[0]["content"].endswith("---\n\nRecent lore\n\nAfter history")
     assert [message["role"] for message in messages] == ["system", "user"]
 
 

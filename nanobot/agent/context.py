@@ -19,7 +19,7 @@ from nanobot.bus.events import (
     RUNTIME_CONTROL_SESSION_DISCARD,
     InboundMessage,
 )
-from nanobot.roleplay.cards import CharacterProfile
+from nanobot.roleplay.cards import CharacterProfile, CharacterPrompt
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     RuntimeContextBlock,
@@ -108,15 +108,15 @@ class ContextBuilder:
         session_summary: SessionSummary | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
-        character_lore: tuple[str, str] = ("", ""),
+        character_prompt: CharacterPrompt | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
         parts = [self._get_identity(channel=channel, workspace=root)]
+        character = None
         if self.character and channel != "dream":
-            parts.extend(filter(None, (
-                character_lore[0], self.character.identity(), character_lore[1],
-            )))
+            character = character_prompt or self.character.prompt([], None)
+            parts.append(character.definition)
 
         bootstrap = self._load_bootstrap_files(root)
         if bootstrap:
@@ -160,8 +160,8 @@ class ContextBuilder:
         # Rebuilt for every request rather than appended as a transcript turn: a
         # trailing system message would be persisted with the turn, and Anthropic
         # keeps only the last system message as its system prompt.
-        if self.character and channel != "dream" and (instructions := self.character.post_history()):
-            parts.append(instructions)
+        if character and character.closing:
+            parts.append(character.closing)
 
         return "\n\n---\n\n".join(parts)
 
@@ -307,9 +307,9 @@ class ContextBuilder:
                     session_summary=transcript.session_summary,
                     workspace=root,
                     include_memory=include_memory,
-                    character_lore=(
-                        self.character.lore(transcript.history, transcript.current_message)
-                        if self.character and channel != "dream" else ("", "")
+                    character_prompt=(
+                        self.character.prompt(transcript.history, transcript.current_message)
+                        if self.character and channel != "dream" else None
                     ),
                 ),
             },

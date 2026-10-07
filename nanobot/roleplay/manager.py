@@ -199,7 +199,7 @@ class CharacterManager:
             CharacterProfile(staging / "card.json", parent.roleplay.user_name).bounded_identity(budget)
             if updating:
                 # The running profile reloads card.json by mtime. Leave config,
-                # workspace, sessions, and memory intact; JSON updates keep the avatar.
+                # workspace, sessions, and memory intact; cards without an icon keep the avatar.
                 if imported.avatar:
                     (staging / "avatar.png").replace(target / "avatar.png")
                 (staging / "card.json").replace(target / "card.json")
