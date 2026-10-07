@@ -11,6 +11,7 @@ import httpx
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.frames import EXTERNAL_CLOSE_CODES, CloseCode
 from websockets.http11 import Request, Response
 
 from nanobot.roleplay.manager import CharacterManager
@@ -27,6 +28,17 @@ if TYPE_CHECKING:
 _ROUTE = re.compile(r"^/_characters/([a-f0-9]{32})(/.*)$")
 _HOP_HEADERS = {"connection", "upgrade", "host", "content-length", "transfer-encoding",
                 "accept-encoding", "content-encoding", "proxy-authorization"}
+
+
+def _relayed_close(source: ServerConnection | ClientConnection) -> tuple[int, str]:
+    """Return the close frame to pass on for a side that has closed."""
+    code = source.close_code
+    if code is not None and (code in EXTERNAL_CLOSE_CODES or 3000 <= code < 5000):
+        return code, source.close_reason or ""
+    # 1005 means a clean close without a status; 1006/1015 cannot be sent on the wire.
+    if code == CloseCode.NO_STATUS_RCVD:
+        return CloseCode.NORMAL_CLOSURE, ""
+    return CloseCode.INTERNAL_ERROR, ""
 
 
 class CharacterProxy:
@@ -118,8 +130,12 @@ class CharacterProxy:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            await upstream.close()
-            await connection.close()
+            # Tell the other side why this one closed (auth, size, restart, ...).
+            # Neither side has closed when the relay itself is cancelled at shutdown.
+            closed = next((side for side in (upstream, connection) if side.close_code is not None), None)
+            code, reason = _relayed_close(closed) if closed else (CloseCode.GOING_AWAY, "")
+            await upstream.close(code, reason)
+            await connection.close(code, reason)
         return True
 
     async def close(self) -> None:
