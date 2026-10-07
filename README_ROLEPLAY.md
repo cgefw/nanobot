@@ -57,7 +57,7 @@ QQ 与网页保留各自的会话，共用当前角色的设定和已保存的�
 
 - JSON / PNG：V1、V2 常用字段；V3 基础字段映射，导入时显示兼容性提示。
 - AICC：支持人物设定、开场白、提示词和世界书基础字段；兼容 PNG 尾部角色数据。原始数据保留，群聊开场白与深度提示定位暂不支持。
-- 支持名称、描述、性格、场景、开场白、备选开场白、对话示例、system prompt、post-history instructions。
+- 支持名称、描述、性格、场景、开场白、备选开场白、对话示例、system prompt、post-history instructions。post-history instructions 每轮放在系统提示末尾，不作为单独消息写入聊天记录。
 - 展开 `{{char}}`、`{{user}}`、`{{original}}` 和旧式 `<BOT>` / `<USER>`。`{{user}}` 默认是“用户”，可在配置中设置 `roleplay.userName`。
 - 基础世界书：启用开关、常驻条目、关键词、第二组关键词、大小写、优先级、插入顺序与位置、扫描深度、token 预算。
 - 保存原始 JSON。PNG 提取的头像缩至最大 512 像素并去除元数据。

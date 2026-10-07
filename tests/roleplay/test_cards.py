@@ -4,14 +4,18 @@ import json
 import struct
 import zlib
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from PIL import Image, PngImagePlugin
 
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.context import ContextBuilder
+from nanobot.agent.loop import AgentLoop
 from nanobot.agent.memory import MemoryStore
+from nanobot.bus.queue import MessageBus
+from nanobot.providers.base import LLMResponse
 from nanobot.roleplay.cards import MAX_CARD_BYTES, CharacterProfile, parse_card
 from nanobot.roleplay.manager import CharacterManager
 from nanobot.webui.settings_services import WebUISettingsConfig
@@ -142,7 +146,37 @@ def test_context_preserves_tools_but_replaces_soul(tmp_path):
     assert "WRONG SOUL" not in messages[0]["content"]
     assert "Custom role" in messages[0]["content"]
     assert context.skills is not None
-    assert messages[-1] == {"role": "system", "content": "After history"}
+    assert messages[0]["content"].endswith("After history")
+    assert [message["role"] for message in messages] == ["system", "user"]
+
+
+@pytest.mark.asyncio
+async def test_post_history_instructions_are_never_persisted_or_replayed(tmp_path):
+    card = tmp_path / "card.json"
+    card.write_bytes(encoded_card(post_history_instructions="After history"))
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = SimpleNamespace(max_tokens=100, temperature=0.1, reasoning_effort=None)
+    provider.estimate_prompt_tokens = MagicMock(return_value=(100, "test"))
+    provider.chat_stream_with_retry = AsyncMock(return_value=LLMResponse(content="Hi", finish_reason="stop"))
+    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path / "workspace",
+                     model="test-model", context_window_tokens=100_000, character_card=str(card))
+    try:
+        # Earlier builds saved the instructions as a system turn after each user message.
+        session = loop.sessions.get_or_create("cli:role")
+        session.add_message("user", "Earlier")
+        session.add_message("system", "Stale instructions")
+        session.add_message("assistant", "Earlier reply")
+        loop.sessions.save(session)
+        await loop.process_direct("Now", session_key="cli:role")
+        sent = provider.chat_stream_with_retry.call_args.kwargs["messages"]
+        assert [message["role"] for message in sent] == ["system", "user", "assistant", "user"]
+        assert sent[0]["content"].endswith("After history")
+        loop.sessions.invalidate("cli:role")
+        saved = loop.sessions.get_or_create("cli:role").messages
+        assert [message["role"] for message in saved[3:]] == ["user", "assistant"]
+    finally:
+        await loop.aclose()
 
 
 @pytest.mark.asyncio

@@ -157,6 +157,12 @@ class ContextBuilder:
                 f"{session_summary['text']}"
             )
 
+        # Rebuilt for every request rather than appended as a transcript turn: a
+        # trailing system message would be persisted with the turn, and Anthropic
+        # keeps only the last system message as its system prompt.
+        if self.character and channel != "dream" and (instructions := self.character.post_history()):
+            parts.append(instructions)
+
         return "\n\n---\n\n".join(parts)
 
     def _get_identity(self, channel: str | None = None, workspace: Path | None = None) -> str:
@@ -319,8 +325,6 @@ class ContextBuilder:
             runtime_context_blocks=transcript.runtime_context_blocks,
         )
         messages.append(current)
-        if self.character and channel != "dream" and (instructions := self.character.post_history()):
-            messages.append({"role": "system", "content": instructions})
         return messages
 
     def build_current_message(
