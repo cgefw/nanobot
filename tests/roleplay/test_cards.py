@@ -171,6 +171,7 @@ def test_idle_disabled_does_not_scan_sessions():
 def test_import_is_lazy_and_isolated(tmp_path, idle_minutes):
     settings = WebUISettingsConfig(tmp_path / "config.json")
     settings.update(lambda c: setattr(c.channels, "telegram", {"enabled": True, "token": "parent-only"}))
+    settings.update(lambda c: setattr(c.channels, "send_progress", False))
     settings.update(lambda c: setattr(c.agents.defaults, "session_ttl_minutes", idle_minutes))
     manager = CharacterManager(settings)
     ids = [manager.import_card({"data": base64.b64encode(encoded_card(name)).decode()})["id"]
@@ -179,8 +180,11 @@ def test_import_is_lazy_and_isolated(tmp_path, idle_minutes):
     assert not manager._leases
     assert settings.load().agents.defaults.session_ttl_minutes == idle_minutes
     for role_id in ids:
-        raw = json.loads((manager.directory(role_id) / "config.json").read_text())
-        assert raw["channels"]["telegram"]["enabled"] is False
+        text = (manager.directory(role_id) / "config.json").read_text()
+        assert "parent-only" not in text
+        raw = json.loads(text)
+        assert "telegram" not in raw["channels"]
+        assert raw["channels"]["sendProgress"] is False
         assert raw["gateway"]["heartbeat"]["enabled"] is False
         assert role_id in raw["agents"]["defaults"]["workspace"]
         assert raw["agents"]["defaults"]["idleCompactAfterMinutes"] == 0
