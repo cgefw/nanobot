@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useClient } from "@/providers/ClientProvider";
 import { fetchBootstrap, loadSavedSecret } from "@/lib/bootstrap";
 import { fetchWithTimeout } from "@/lib/http";
-import { characterId, selectGreeting, selectedGreeting, switchCharacter } from "@/lib/characters";
+import { characterId, charactersAvailable, selectGreeting, selectedGreeting, switchCharacter } from "@/lib/characters";
 import { cn } from "@/lib/utils";
 
 export type Character = { id: string; name: string; running: boolean };
@@ -351,7 +351,7 @@ function CharacterDetailsContent() {
 }
 
 export function CharacterDetails() {
-  return characterId() ? <CharacterDetailsContent /> : null;
+  return characterId() && charactersAvailable() ? <CharacterDetailsContent /> : null;
 }
 
 export function CharacterWelcome() {

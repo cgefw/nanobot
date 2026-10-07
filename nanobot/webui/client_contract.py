@@ -13,6 +13,8 @@ from nanobot import __version__
 
 WEBUI_PROTOCOL = 1
 CORE_CAPABILITY = "webui.core.v1"
+# Optional: /api/characters and the /_characters/<id>/ gateway proxy.
+CHARACTERS_CAPABILITY = "webui.characters.v1"
 
 
 class Compatibility(TypedDict):
@@ -26,7 +28,7 @@ def webui_contract() -> dict[str, object]:
         "version": __version__,
         "min_protocol": WEBUI_PROTOCOL,
         "max_protocol": WEBUI_PROTOCOL,
-        "capabilities": [CORE_CAPABILITY],
+        "capabilities": [CORE_CAPABILITY, CHARACTERS_CAPABILITY],
     }
 
 

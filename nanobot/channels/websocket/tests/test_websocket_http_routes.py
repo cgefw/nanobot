@@ -3877,6 +3877,7 @@ def test_trusted_proxy_bootstrap_has_no_tokens(
     assert "token" not in payload
     assert "api_token" not in payload
     assert payload["ws_path"] == "/"
+    assert "webui.characters.v1" in payload["terminal"]["webui"]["capabilities"]
 
 
 @pytest.mark.asyncio

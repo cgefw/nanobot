@@ -1,4 +1,4 @@
-import { characterStorageKey } from "@/lib/characters";
+import { charactersAvailable, characterStorageKey, rememberCharacterSupport } from "@/lib/characters";
 import {
   lazy,
   Suspense,
@@ -944,6 +944,7 @@ export default function App() {
         try {
           const boot = await fetchBootstrap("", secret);
           if (cancelled) return;
+          rememberCharacterSupport(boot);
           if (secret) saveSecret(secret);
           const url = deriveWsUrl(boot.ws_path, boot.token, boot.ws_url);
           activateReloadCache(url);
@@ -2848,7 +2849,7 @@ function Shell({
                 )}
               >
                 <Sidebar
-                  characterSelector={<CharacterSidebar />}
+                  characterSelector={charactersAvailable() ? <CharacterSidebar /> : undefined}
                   {...sidebarProps}
                   collapsed={!hostSidebarOpen}
                   hostChromeInset={showHostChrome}
@@ -2887,7 +2888,7 @@ function Shell({
               >
                 <SheetTitle className="sr-only">{t("sidebar.navigation")}</SheetTitle>
                 <Sidebar
-                  characterSelector={<CharacterSidebar />}
+                  characterSelector={charactersAvailable() ? <CharacterSidebar /> : undefined}
                   {...sidebarProps}
                   onCollapse={closeMobileSidebar}
                   containActionMenus

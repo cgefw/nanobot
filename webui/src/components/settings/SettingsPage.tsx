@@ -8,6 +8,7 @@ import { SettingsFeature } from "@/components/settings/shared/SettingsFeature";
 
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
 import { CharacterSettings } from "@/components/settings/CharacterSettings";
+import { charactersAvailable } from "@/lib/characters";
 import { ImageGenerationSettings } from "@/components/settings/capabilities/ImageGenerationSettings";
 import { AdvancedSettings } from "@/components/settings/capabilities/SecuritySettings";
 import { TranscriptionSettings } from "@/components/settings/capabilities/TranscriptionSettings";
@@ -278,7 +279,7 @@ export function SettingsPage({
     if (!settings) return null;
     switch (section) {
       case "characters":
-        return <CharacterSettings />;
+        return charactersAvailable() ? <CharacterSettings /> : null;
       case "capabilities": {
         const state = controller.runtimeConfigState;
         const toggleRuntime = (path: string, enabled: boolean) => {
