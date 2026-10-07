@@ -486,6 +486,7 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
             dream_runtime = loop.dream_runtime()
             resp = await loop.process_direct(
                 prompt,
+                channel=store.dream_channel,
                 session_key=key,
                 ephemeral=True,
                 tools=store.build_dream_tools(),
