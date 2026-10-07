@@ -488,6 +488,8 @@ export interface SidebarStatePayload {
 }
 
 export interface BootstrapResponse {
+  /** Host identity; ``webui.capabilities`` lists optional features this host serves. */
+  terminal?: { webui?: { capabilities?: unknown } };
   token?: string;
   api_token?: string;
   ws_path: string;

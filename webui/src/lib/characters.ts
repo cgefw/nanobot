@@ -1,5 +1,17 @@
+import type { BootstrapResponse } from "./types";
+
 /** Role selection is a page boundary: socket, queries, and in-memory caches reset together. */
 let greetingIndex = 0;
+let hostServesCharacters = false;
+
+/** Record whether the connected host declares character routes in its WebUI contract. */
+export function rememberCharacterSupport(boot: BootstrapResponse): void {
+  const capabilities = boot.terminal?.webui?.capabilities;
+  hostServesCharacters = Array.isArray(capabilities) && capabilities.includes("webui.characters.v1");
+}
+
+/** Hosts without the capability, including remote hosts reached through a local client, get no character UI. */
+export function charactersAvailable(): boolean { return hostServesCharacters; }
 export function selectedGreeting(): number { return greetingIndex; }
 export function selectGreeting(index: number): void { greetingIndex = index; }
 

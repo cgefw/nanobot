@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { charactersAvailable } from "@/lib/characters";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV_ITEMS: Array<{ key: SettingsSectionKey; icon: LucideIcon; fallback: string }> = [
@@ -45,6 +46,11 @@ const SETTINGS_NAV_ITEMS: Array<{ key: SettingsSectionKey; icon: LucideIcon; fal
   { key: "advanced", icon: ShieldCheck, fallback: "Advanced" },
   { key: "about", icon: Info, fallback: "About" },
 ];
+
+/** Sections the connected host serves; character management needs its capability. */
+function visibleNavItems() {
+  return SETTINGS_NAV_ITEMS.filter(({ key }) => key !== "characters" || charactersAvailable());
+}
 
 export function standaloneSectionTitle(section: SettingsSectionKey): string {
   if (section === "apps") return "Apps";
@@ -86,8 +92,9 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
     : t("app.system.restartAction");
   const navSection = isCapabilitySection(activeSection) ? "capabilities" : activeSection;
   const activeNavItemRef = useRef<HTMLButtonElement>(null);
-  const activeItem = SETTINGS_NAV_ITEMS.find((item) => item.key === navSection)
-    ?? SETTINGS_NAV_ITEMS[0];
+  const navItems = visibleNavItems();
+  const activeItem = navItems.find((item) => item.key === navSection)
+    ?? navItems[0];
   const activeLabel = t(`settings.nav.${activeItem.key}`, {
     defaultValue: activeItem.fallback,
   });
@@ -126,7 +133,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           scope="settings"
           className="relative hidden space-y-1 lg:block"
         >
-          {SETTINGS_NAV_ITEMS.map(({ key, icon: Icon, fallback }) => {
+          {navItems.map(({ key, icon: Icon, fallback }) => {
             const active = key === navSection;
             return (
               <button
@@ -255,7 +262,7 @@ function MobileSettingsNavigation({
             aria-label={t("settings.sidebar.ariaLabel")} aria-labelledby={undefined}
             className="w-60 max-w-[calc(100vw-1.5rem)] data-[state=open]:slide-in-from-top-1 data-[state=closed]:slide-out-to-top-1 data-[state=open]:duration-150 data-[state=closed]:duration-100 motion-reduce:data-[state=open]:animate-none motion-reduce:data-[state=closed]:animate-none"
           >
-            {SETTINGS_NAV_ITEMS.map(({ key, icon: Icon, fallback }) => {
+            {visibleNavItems().map(({ key, icon: Icon, fallback }) => {
               const active = key === navSection;
               return (
                 <DropdownMenuItem key={key}

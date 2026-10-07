@@ -791,6 +791,8 @@ class GatewayHTTPHandler:
 
         if is_proxy_authenticated:
             payload = {
+                # Carries no credentials; clients read optional WebUI capabilities from it.
+                "terminal": terminal,
                 "ws_path": _normalize_config_path(self.config.path),
                 "ws_url": self._bootstrap_ws_url(request),
                 "limits": self.ingress.bootstrap_limits(
