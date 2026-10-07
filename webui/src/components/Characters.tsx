@@ -24,11 +24,14 @@ const AGENT_FILES = [
 ] as const;
 const EMPTY_AGENT = { name: "", files: { "AGENTS.md": "", "SOUL.md": "", "USER.md": "" } };
 const CharacterMarkdown = lazy(() => import("@/components/MarkdownTextRenderer"));
+// A 24 MiB CHARX upload can outlast the default mutation timeout on slow links.
+const CARD_UPLOAD_TIMEOUT_MS = 120_000;
 type CardPreview = {
   kind?: "agent";
   files?: Record<string, string>;
   card: { name: string; description?: string; personality?: string; scenario?: string;
     first_mes?: string; mes_example?: string; creator_notes?: string; system_prompt?: string;
+    creator_notes_multilingual?: Record<string, string> | null;
     alternate_greetings?: string[]; character_book?: { entries: unknown[] } };
   avatar?: string | null;
   warnings?: string[];
@@ -78,6 +81,13 @@ export async function listCharacters(token: string): Promise<Character[]> {
   }
 }
 
+/** V3 creator notes in the UI language; `creator_notes` then stands for English. */
+function creatorNotes(card: CardPreview["card"], language: string): string | undefined {
+  const notes = card.creator_notes_multilingual;
+  if (!notes) return card.creator_notes;
+  return notes[language.split("-")[0].toLowerCase()] ?? notes.en ?? card.creator_notes;
+}
+
 function CardContent({ preview }: { preview: CardPreview }) {
   const { t } = useTranslation();
   return <div className="min-w-0 space-y-4 text-[13px] leading-6">
@@ -86,7 +96,7 @@ function CardContent({ preview }: { preview: CardPreview }) {
     <p className="text-base font-medium">{preview.card.name}</p>
     {[[t("characters.systemPrompt"), preview.card.system_prompt], [t("characters.description"), preview.card.description], [t("characters.personality"), preview.card.personality],
       [t("characters.scenario"), preview.card.scenario], [t("characters.greeting"), preview.card.first_mes],
-      [t("characters.examples"), preview.card.mes_example], [t("characters.notes"), preview.card.creator_notes],
+      [t("characters.examples"), preview.card.mes_example], [t("characters.notes"), creatorNotes(preview.card, i18n.resolvedLanguage ?? i18n.language)],
     ].map(([label, content]) => content && <div key={label}>
       <p className="mb-1 font-medium text-muted-foreground">{label}</p>
       <p className="whitespace-pre-wrap break-words">{content}</p>
@@ -191,8 +201,8 @@ export function CharacterSidebar() {
   async function chooseFile(file?: File) {
     if (!file || busy) return;
     setMode("import"); setError(""); setPreview(null); upload.current = null;
-    if (!/\.(json|png)$/i.test(file.name)) { setError(t("characters.invalidFile")); return; }
-    if (file.size > 8 * 1024 * 1024) { setError(t("characters.fileTooLarge")); return; }
+    if (!/\.(json|png|charx)$/i.test(file.name)) { setError(t("characters.invalidFile")); return; }
+    if (file.size > 24 * 1024 * 1024) { setError(t("characters.fileTooLarge")); return; }
     setBusy(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -204,7 +214,7 @@ export function CharacterSidebar() {
       const payload = { filename: file.name, data: dataUrl.split(",")[1] };
       const result = await client.requestMutation<CardPreview>(updateId ? "characters.update" : "characters.import", {
         ...payload, ...(updateId ? { id: updateId } : {}), preview: true,
-      });
+      }, CARD_UPLOAD_TIMEOUT_MS);
       upload.current = payload; setPreview(result);
     } catch (err) { setError(characterErrorMessage(err)); }
     finally { setBusy(false); }
@@ -216,7 +226,7 @@ export function CharacterSidebar() {
     try {
       await client.requestMutation(updateId ? "characters.update" : "characters.import", {
         ...upload.current, ...(updateId ? { id: updateId } : {}),
-      });
+      }, CARD_UPLOAD_TIMEOUT_MS);
       setCharacters(await listCharacters(getToken()));
       setPreview(null); upload.current = null;
       if (updateId) switchCharacter(updateId);
@@ -279,7 +289,7 @@ export function CharacterSidebar() {
             void chooseFile(event.dataTransfer.files[0]);
           }}>
           <Upload className="h-4 w-4 shrink-0" /><span>{t("characters.drop")}</span>
-          <input aria-label={t("characters.import")} type="file" accept=".json,.png" className="sr-only" disabled={busy}
+          <input aria-label={t("characters.import")} type="file" accept=".json,.png,.charx" className="sr-only" disabled={busy}
             onChange={(event) => { void chooseFile(event.target.files?.[0]); event.target.value = ""; }} />
         </label>
         <p className="text-xs leading-5 text-muted-foreground">{t("characters.support")}</p>

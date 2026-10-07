@@ -324,6 +324,8 @@ class WebUICommandRouter:
                 self._transcripts.append(new_id, {
                     "event": "message", "chat_id": new_id, "text": greetings[index],
                 })
+                # The next new chat previews and saves freshly drawn {{random}} values.
+                character.reroll_greetings()
             self._transport.webui_attach(connection, new_id)
             await self._transport.webui_send_event(
                 connection,

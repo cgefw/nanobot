@@ -440,7 +440,7 @@ async def test_character_process_proxy_auth_and_isolated_greeting(tmp_path: Path
 
             ids = []
             for name in ["Alice", "Bob"]:
-                raw = json.dumps({"name": name, "first_mes": "Hello {{user}} from {{char}}",
+                raw = json.dumps({"name": name, "first_mes": "Hello {{user}} from {{char}} #{{roll:1000000000}}",
                                   "alternate_greetings": ["Other {{char}}"]}).encode()
                 result = await mutate("characters.import", {"data": base64.b64encode(raw).decode()})
                 ids.append(result["id"])
@@ -465,6 +465,16 @@ async def test_character_process_proxy_auth_and_isolated_greeting(tmp_path: Path
                         assert saved.messages[0]["content"] == f"Other {name}"
                         saved.add_message("user", "Hello")
                         assert saved.get_history()[0]["content"] == f"Other {name}"
+                        # Each new chat saves the greeting it previewed, then draws new random values.
+                        child_auth = {"Authorization": f'Bearer {child["api_token"]}'}
+                        preview = (await http.get(f"{prefix}/api/characters/current", headers=child_auth)).json()
+                        await ws.send(json.dumps({"type": "new_chat", "greeting_index": 0}))
+                        second = await _recv_until(ws, "attached")
+                        greeting = sessions.get_or_create(f'websocket:{second["chat_id"]}').messages[0]["content"]
+                        assert greeting == preview["greetings"][0]
+                        assert greeting.startswith(f"Hello 用户 from {name} #")
+                        following = (await http.get(f"{prefix}/api/characters/current", headers=child_auth)).json()
+                        assert following["greetings"][0] != greeting
                         denied_api = await http.get(f"{prefix}/api/sessions", headers={"Authorization": f'Bearer {boot["api_token"]}'})
                         assert denied_api.status_code == 401
                         allowed_api = await http.get(f"{prefix}/api/sessions", headers={"Authorization": f'Bearer {child["api_token"]}'})
