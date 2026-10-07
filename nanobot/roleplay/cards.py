@@ -20,6 +20,7 @@ from nanobot.utils.prompt_templates import render_template
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_CARD_BYTES = 1024 * 1024
 MAX_SCAN_CHARS = 16_384
+# Errors and warnings are stable codes; the WebUI localizes them under characters.errors/warnings.
 _MACROS = re.compile(r"\{\{(char|user|original)\}\}|<(BOT|USER)>", re.IGNORECASE)
 
 
@@ -122,20 +123,20 @@ def _aicc_fields(data: Any) -> dict[str, Any]:
 
 def parse_card(raw: bytes, filename: str = "card.json") -> ImportedCard:
     if not raw or len(raw) > MAX_UPLOAD_BYTES:
-        raise ValueError("Character card must be between 1 byte and 8 MiB")
+        raise ValueError("card_size_invalid")
     avatar = None
     if raw.startswith(b"\x89PNG\r\n\x1a\n"):
         try:
             with Image.open(io.BytesIO(raw)) as image:
                 if image.width * image.height > 16_000_000:
-                    raise ValueError("Character avatar exceeds 16 megapixels")
+                    raise ValueError("card_avatar_too_large")
                 # Text chunks may follow IDAT; opening the header alone misses them.
                 image.load()
                 encoded = image.info.get("ccv3") or image.info.get("chara")
                 if not isinstance(encoded, str) or not encoded:
-                    raise ValueError("PNG 中未找到角色卡数据（chara / ccv3）。请使用原始角色卡 PNG 或 JSON，截图或重新保存的图片可能没有角色数据。")
+                    raise ValueError("card_png_without_data")
                 if len(encoded) > MAX_CARD_BYTES * 2:
-                    raise ValueError("PNG character-card metadata exceeds the size limit")
+                    raise ValueError("card_data_too_large")
                 source = base64.b64decode(encoded, validate=True)
                 image.thumbnail((512, 512))
                 clean = Image.new("RGBA", image.size)
@@ -144,34 +145,34 @@ def parse_card(raw: bytes, filename: str = "card.json") -> ImportedCard:
                 clean.save(output, format="PNG")
                 avatar = output.getvalue()
         except (OSError, UnidentifiedImageError, binascii.Error, Image.DecompressionBombError) as exc:
-            raise ValueError("Invalid PNG character card") from exc
+            raise ValueError("card_png_invalid") from exc
     elif filename.lower().endswith(".png"):
-        raise ValueError("Invalid PNG signature")
+        raise ValueError("card_png_invalid")
     else:
         source = raw
     if len(source) > MAX_CARD_BYTES:
-        raise ValueError("Decoded character data exceeds 1 MiB")
+        raise ValueError("card_data_too_large")
     try:
         document = json.loads(source.decode("utf-8-sig"))
     except (ValueError, UnicodeError, RecursionError) as exc:
-        raise ValueError("Invalid character-card JSON") from exc
+        raise ValueError("card_json_invalid") from exc
     if not isinstance(document, dict):
-        raise ValueError("Character card must be a JSON object")
+        raise ValueError("card_json_invalid")
     document = TypeAdapter(dict[str, Any]).validate_python(document)
     spec = document.get("spec")
     if spec not in (None, "chara_card_v2", "chara_card_v3", "aicc_card"):
-        raise ValueError("Unsupported character-card specification")
+        raise ValueError("card_spec_unsupported")
     data = document if spec is None else document.get("data")
     card = CharacterCard.model_validate(_aicc_fields(data) if spec == "aicc_card" else data)
     warnings: list[str] = []
     if spec == "aicc_card":
-        warnings.append("AICC：已转换人物设定、开场白和世界书基础字段；不支持群聊开场白及深度提示定位。")
+        warnings.append("aicc_partial")
     if spec == "chara_card_v3":
-        warnings.append("V3: basic character fields only; assets and CHARX are not supported.")
+        warnings.append("v3_basic_only")
     if card.extensions or (card.character_book and any(e.model_extra for e in card.character_book.entries)):
-        warnings.append("Extension fields are preserved but scripts and advanced lore rules are not executed.")
+        warnings.append("extensions_preserved")
     if card.character_book and card.character_book.recursive_scanning:
-        warnings.append("Recursive lore scanning is not supported.")
+        warnings.append("recursive_lore_unsupported")
     return ImportedCard(card, source, avatar, tuple(warnings))
 
 
@@ -194,7 +195,7 @@ class CharacterProfile:
         stamp = (stat.st_mtime_ns, stat.st_size)
         if self._card is None or self._stamp != stamp:
             if stat.st_size > MAX_CARD_BYTES:
-                raise ValueError("Character data exceeds 1 MiB")
+                raise ValueError("card_data_too_large")
             imported = parse_card(self.path.read_bytes())
             card = imported.card
             # Expand with this parse only: re-reading the card here would let a card
@@ -288,8 +289,8 @@ class CharacterProfile:
         identity = self.identity()
         instructions = identity + "\n" + self.post_history()
         if truncate_text_to_tokens(instructions, budget) != instructions:
-            raise ValueError("Character definition exceeds its context budget; shorten the card")
+            raise ValueError("card_definition_over_budget")
         for greeting in self.greetings():
             if truncate_text_to_tokens(greeting, budget) != greeting:
-                raise ValueError("Character greeting exceeds its context budget; shorten the card")
+                raise ValueError("card_greeting_over_budget")
         return identity

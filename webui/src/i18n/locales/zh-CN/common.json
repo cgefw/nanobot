@@ -2480,6 +2480,40 @@
     "stopping": "停止中…",
     "empty": "暂无角色。可从侧栏的角色下拉菜单创建角色或导入角色卡。",
     "deleteTitle": "删除“{{name}}”？",
-    "deleteHelp": "将停止该助手，并永久删除其独立目录内的配置、提示词、聊天记录、记忆和附件。此操作无法撤销。"
+    "deleteHelp": "将停止该助手，并永久删除其独立目录内的配置、提示词、聊天记录、记忆和附件。此操作无法撤销。",
+    "errors": {
+      "character_not_found": "角色不存在或已被删除。",
+      "character_id_invalid": "角色 ID 无效。",
+      "character_limit_reached": "最多支持 100 个角色。",
+      "agent_name_invalid": "请填写 1–256 字的 Agent 名称。",
+      "agent_file_unsupported": "仅支持 AGENTS.md、SOUL.md 和 USER.md。",
+      "agent_file_not_text": "提示词文件必须是文本。",
+      "agent_files_too_large": "Agent 提示词文件总大小不能超过 1 MiB。",
+      "agent_file_outside_workspace": "Agent 提示词文件必须位于当前工作区内。",
+      "agent_prompt_over_budget": "Agent 提示词超过当前模型的上下文预算，请缩短内容。",
+      "agent_file_update_invalid": "请指定文件名和文本内容。",
+      "card_size_invalid": "角色卡大小必须在 1 字节到 8 MiB 之间。",
+      "card_upload_invalid": "上传的文件无效。",
+      "card_avatar_too_large": "角色卡图片超过 1600 万像素。",
+      "card_png_without_data": "PNG 中未找到角色卡数据（chara / ccv3）。请使用原始角色卡 PNG 或 JSON，截图或重新保存的图片可能没有角色数据。",
+      "card_png_invalid": "PNG 角色卡无效。",
+      "card_data_too_large": "角色数据超过 1 MiB。",
+      "card_json_invalid": "角色卡不是有效的 JSON 对象。",
+      "card_spec_unsupported": "不支持该角色卡规范。",
+      "card_definition_over_budget": "角色设定超过当前模型的上下文预算，请缩短角色卡。",
+      "card_greeting_over_budget": "开场白超过当前模型的上下文预算，请缩短角色卡。",
+      "card_update_target_invalid": "只能更新本实例中已导入的角色卡。",
+      "manager_shutting_down": "服务正在关闭，请在重启后重试。",
+      "delete_outside_instance": "只能删除当前实例目录中的角色。",
+      "delete_config_symlinked": "不能删除配置文件指向其他位置的角色。",
+      "delete_stop_failed": "角色进程未能停止，未删除数据，请稍后重试。",
+      "unknown_action": "未知的角色操作。"
+    },
+    "warnings": {
+      "aicc_partial": "AICC：已转换人物设定、开场白和世界书基础字段；不支持群聊开场白及深度提示定位。",
+      "v3_basic_only": "V3：仅支持基础角色字段，不支持资源和 CHARX。",
+      "extensions_preserved": "扩展字段已保留，但不会执行脚本和高级世界书规则。",
+      "recursive_lore_unsupported": "不支持世界书递归扫描。"
+    }
   }
 }

@@ -2480,6 +2480,40 @@
     "stopping": "Stopping…",
     "empty": "No characters yet. Create a character or import a card from the sidebar character menu.",
     "deleteTitle": "Delete “{{name}}”?",
-    "deleteHelp": "This stops the assistant and permanently deletes the configuration, instructions, chats, memory, and attachments in its own directory. This cannot be undone."
+    "deleteHelp": "This stops the assistant and permanently deletes the configuration, instructions, chats, memory, and attachments in its own directory. This cannot be undone.",
+    "errors": {
+      "character_not_found": "This character no longer exists.",
+      "character_id_invalid": "Invalid character.",
+      "character_limit_reached": "At most 100 characters are supported.",
+      "agent_name_invalid": "Enter an agent name of 1–256 characters.",
+      "agent_file_unsupported": "Only AGENTS.md, SOUL.md, and USER.md can be edited.",
+      "agent_file_not_text": "Instruction files must be text.",
+      "agent_files_too_large": "Instruction files can total at most 1 MiB.",
+      "agent_file_outside_workspace": "Instruction files must stay inside the agent workspace.",
+      "agent_prompt_over_budget": "The instructions exceed the current model's context budget. Shorten them.",
+      "agent_file_update_invalid": "Choose an instruction file and enter its text.",
+      "card_size_invalid": "Character cards must be between 1 byte and 8 MiB.",
+      "card_upload_invalid": "The uploaded file is invalid.",
+      "card_avatar_too_large": "The card image exceeds 16 megapixels.",
+      "card_png_without_data": "No character data (chara / ccv3) was found in this PNG. Use the original card PNG or JSON; screenshots and re-saved images may not contain character data.",
+      "card_png_invalid": "This is not a valid PNG character card.",
+      "card_data_too_large": "Character data exceeds 1 MiB.",
+      "card_json_invalid": "The character card is not a valid JSON object.",
+      "card_spec_unsupported": "This character card specification is not supported.",
+      "card_definition_over_budget": "The character definition exceeds the current model's context budget. Shorten the card.",
+      "card_greeting_over_budget": "A greeting exceeds the current model's context budget. Shorten the card.",
+      "card_update_target_invalid": "Only an imported character card in this instance can be updated.",
+      "manager_shutting_down": "The service is shutting down. Try again after it restarts.",
+      "delete_outside_instance": "Only characters inside this instance's directory can be deleted.",
+      "delete_config_symlinked": "This character's configuration points elsewhere, so it cannot be deleted here.",
+      "delete_stop_failed": "The character process did not stop, so no data was deleted. Try again later.",
+      "unknown_action": "Unknown character action."
+    },
+    "warnings": {
+      "aicc_partial": "AICC: character settings, greetings, and basic lorebook fields were converted; group greetings and depth prompt placement are not supported.",
+      "v3_basic_only": "V3: basic character fields only; assets and CHARX are not supported.",
+      "extensions_preserved": "Extension fields are preserved, but scripts and advanced lore rules are not executed.",
+      "recursive_lore_unsupported": "Recursive lore scanning is not supported."
+    }
   }
 }

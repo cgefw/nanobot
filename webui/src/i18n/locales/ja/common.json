@@ -2280,6 +2280,40 @@
     "stopping": "停止処理中…",
     "empty": "キャラクターがありません。サイドバーのメニューから作成またはカードをインポートできます。",
     "deleteTitle": "「{{name}}」を削除しますか？",
-    "deleteHelp": "このアシスタントを停止し、専用ディレクトリの設定、指示、チャット、記憶、添付ファイルを完全に削除します。この操作は元に戻せません。"
+    "deleteHelp": "このアシスタントを停止し、専用ディレクトリの設定、指示、チャット、記憶、添付ファイルを完全に削除します。この操作は元に戻せません。",
+    "errors": {
+      "character_not_found": "このキャラクターは存在しないか、削除されています。",
+      "character_id_invalid": "キャラクター ID が無効です。",
+      "character_limit_reached": "キャラクターは最大 100 件までです。",
+      "agent_name_invalid": "1～256 文字のエージェント名を入力してください。",
+      "agent_file_unsupported": "編集できるのは AGENTS.md、SOUL.md、USER.md のみです。",
+      "agent_file_not_text": "指示ファイルはテキストである必要があります。",
+      "agent_files_too_large": "指示ファイルの合計サイズは 1 MiB までです。",
+      "agent_file_outside_workspace": "指示ファイルはエージェントのワークスペース内に置く必要があります。",
+      "agent_prompt_over_budget": "指示が現在のモデルのコンテキスト予算を超えています。短くしてください。",
+      "agent_file_update_invalid": "指示ファイルを選び、テキストを入力してください。",
+      "card_size_invalid": "キャラクターカードのサイズは 1 バイト以上 8 MiB 以下にしてください。",
+      "card_upload_invalid": "アップロードされたファイルが無効です。",
+      "card_avatar_too_large": "カード画像が 1600 万ピクセルを超えています。",
+      "card_png_without_data": "この PNG にキャラクターデータ（chara / ccv3）が見つかりません。元のカード PNG または JSON を使用してください。スクリーンショットや再保存した画像にはキャラクターデータが含まれない場合があります。",
+      "card_png_invalid": "有効な PNG キャラクターカードではありません。",
+      "card_data_too_large": "キャラクターデータが 1 MiB を超えています。",
+      "card_json_invalid": "キャラクターカードが有効な JSON オブジェクトではありません。",
+      "card_spec_unsupported": "このキャラクターカード仕様には対応していません。",
+      "card_definition_over_budget": "キャラクター設定が現在のモデルのコンテキスト予算を超えています。カードを短くしてください。",
+      "card_greeting_over_budget": "あいさつ文が現在のモデルのコンテキスト予算を超えています。カードを短くしてください。",
+      "card_update_target_invalid": "更新できるのは、このインスタンスにインポートしたキャラクターカードのみです。",
+      "manager_shutting_down": "サービスを終了しています。再起動後にもう一度お試しください。",
+      "delete_outside_instance": "削除できるのは、このインスタンスのディレクトリ内のキャラクターのみです。",
+      "delete_config_symlinked": "このキャラクターの設定ファイルは別の場所を指しているため、ここでは削除できません。",
+      "delete_stop_failed": "キャラクターのプロセスが停止しなかったため、データは削除されていません。しばらくしてからもう一度お試しください。",
+      "unknown_action": "不明なキャラクター操作です。"
+    },
+    "warnings": {
+      "aicc_partial": "AICC：キャラクター設定、あいさつ文、ロアブックの基本フィールドを変換しました。グループ用あいさつ文と深度プロンプトの配置には対応していません。",
+      "v3_basic_only": "V3：基本的なキャラクターフィールドのみ対応しています。アセットと CHARX には対応していません。",
+      "extensions_preserved": "拡張フィールドは保持されますが、スクリプトと高度なロアルールは実行されません。",
+      "recursive_lore_unsupported": "ロアの再帰スキャンには対応していません。"
+    }
   }
 }

@@ -2280,6 +2280,40 @@
     "stopping": "Menghentikan…",
     "empty": "Belum ada karakter. Buat karakter atau impor kartu dari menu di bilah samping.",
     "deleteTitle": "Hapus “{{name}}”?",
-    "deleteHelp": "Asisten akan dihentikan dan konfigurasi, instruksi, percakapan, memori, serta lampiran dalam direktori sendiri akan dihapus permanen. Tindakan ini tidak dapat dibatalkan."
+    "deleteHelp": "Asisten akan dihentikan dan konfigurasi, instruksi, percakapan, memori, serta lampiran dalam direktori sendiri akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.",
+    "errors": {
+      "character_not_found": "Karakter ini sudah tidak ada.",
+      "character_id_invalid": "Karakter tidak valid.",
+      "character_limit_reached": "Maksimal 100 karakter didukung.",
+      "agent_name_invalid": "Masukkan nama agen sepanjang 1–256 karakter.",
+      "agent_file_unsupported": "Hanya AGENTS.md, SOUL.md, dan USER.md yang dapat diedit.",
+      "agent_file_not_text": "File instruksi harus berupa teks.",
+      "agent_files_too_large": "Total ukuran file instruksi maksimal 1 MiB.",
+      "agent_file_outside_workspace": "File instruksi harus berada di dalam ruang kerja agen.",
+      "agent_prompt_over_budget": "Instruksi melebihi anggaran konteks model saat ini. Persingkat isinya.",
+      "agent_file_update_invalid": "Pilih file instruksi dan masukkan teksnya.",
+      "card_size_invalid": "Kartu karakter harus berukuran antara 1 byte dan 8 MiB.",
+      "card_upload_invalid": "File yang diunggah tidak valid.",
+      "card_avatar_too_large": "Gambar kartu melebihi 16 megapiksel.",
+      "card_png_without_data": "Data karakter (chara / ccv3) tidak ditemukan di PNG ini. Gunakan PNG atau JSON kartu asli; tangkapan layar dan gambar yang disimpan ulang mungkin tidak berisi data karakter.",
+      "card_png_invalid": "Ini bukan kartu karakter PNG yang valid.",
+      "card_data_too_large": "Data karakter melebihi 1 MiB.",
+      "card_json_invalid": "Kartu karakter bukan objek JSON yang valid.",
+      "card_spec_unsupported": "Spesifikasi kartu karakter ini tidak didukung.",
+      "card_definition_over_budget": "Definisi karakter melebihi anggaran konteks model saat ini. Persingkat kartunya.",
+      "card_greeting_over_budget": "Salah satu sapaan melebihi anggaran konteks model saat ini. Persingkat kartunya.",
+      "card_update_target_invalid": "Hanya kartu karakter yang diimpor di instans ini yang dapat diperbarui.",
+      "manager_shutting_down": "Layanan sedang dimatikan. Coba lagi setelah dimulai ulang.",
+      "delete_outside_instance": "Hanya karakter di dalam direktori instans ini yang dapat dihapus.",
+      "delete_config_symlinked": "Konfigurasi karakter ini menunjuk ke lokasi lain, sehingga tidak dapat dihapus di sini.",
+      "delete_stop_failed": "Proses karakter tidak berhenti, jadi tidak ada data yang dihapus. Coba lagi nanti.",
+      "unknown_action": "Tindakan karakter tidak dikenal."
+    },
+    "warnings": {
+      "aicc_partial": "AICC: pengaturan karakter, sapaan, dan kolom dasar lorebook telah dikonversi; sapaan grup dan penempatan prompt kedalaman tidak didukung.",
+      "v3_basic_only": "V3: hanya kolom karakter dasar; aset dan CHARX tidak didukung.",
+      "extensions_preserved": "Kolom ekstensi dipertahankan, tetapi skrip dan aturan lore lanjutan tidak dijalankan.",
+      "recursive_lore_unsupported": "Pemindaian lore rekursif tidak didukung."
+    }
   }
 }

@@ -115,7 +115,7 @@ class CharacterManager:
 
     def directory(self, role_id: str) -> Path:
         if role_id not in self.entries():
-            raise ValueError("Character not found")
+            raise ValueError("character_not_found")
         return self.root / role_id
 
     def listing(self) -> dict[str, Any]:
@@ -136,9 +136,9 @@ class CharacterManager:
     def create_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
         name = payload.get("name")
         if not isinstance(name, str) or not name.strip() or len(name.strip()) > 256:
-            raise ValueError("请填写 1–256 字的 Agent 名称")
+            raise ValueError("agent_name_invalid")
         if len(self.entries()) >= MAX_CHARACTERS:
-            raise ValueError("At most 100 characters are supported")
+            raise ValueError("character_limit_reached")
         files = AgentProfile.defaults(agent_files(payload.get("files", {})))
         role_id = uuid.uuid4().hex
         target, staging = self.root / role_id, self.root / f".import-{role_id}"
@@ -165,24 +165,24 @@ class CharacterManager:
         encoded = payload.get("data")
         filename = payload.get("filename", "card.json")
         if not isinstance(encoded, str) or len(encoded) > MAX_UPLOAD_BYTES * 4 // 3 + 4:
-            raise ValueError("Character upload exceeds 8 MiB")
+            raise ValueError("card_size_invalid")
         if not isinstance(filename, str):
-            raise ValueError("Invalid filename")
+            raise ValueError("card_upload_invalid")
         imported = parse_card(base64.b64decode(encoded, validate=True), filename)
         existing_id = payload.get("id")
         if existing_id is not None and not isinstance(existing_id, str):
-            raise ValueError("Invalid character id")
+            raise ValueError("character_id_invalid")
         target = self.directory(existing_id) if isinstance(existing_id, str) else None
         if target is not None and (
             target.is_symlink() or target.resolve().parent != self.root.resolve()
             or not (target / "card.json").is_file()
             or any((target / name).is_symlink() for name in ("card.json", "avatar.png", "config.json"))
         ):
-            raise ValueError("Only an existing character card in this instance can be updated")
+            raise ValueError("card_update_target_invalid")
         if payload.get("preview", False):
             return imported.preview()
         if target is None and len(self.entries()) >= MAX_CHARACTERS:
-            raise ValueError("At most 100 characters are supported")
+            raise ValueError("character_limit_reached")
         role_id = existing_id if isinstance(existing_id, str) else uuid.uuid4().hex
         updating = target is not None
         target = target or self.root / role_id
@@ -257,7 +257,7 @@ class CharacterManager:
     ) -> CharacterEndpoint | None:
         async with self._lock:
             if self._closing:
-                raise ValueError("Character manager is shutting down")
+                raise ValueError("manager_shutting_down")
             directory = self.directory(role_id)
             settings = WebUISettingsConfig(directory / "config.json")
             # Check inside the same lock as stop so a queued restore cannot undo a manual stop.
@@ -362,17 +362,17 @@ class CharacterManager:
         async with self._lock:
             directory = self.directory(role_id)
             if directory.is_symlink() or directory.resolve().parent != self.root.resolve():
-                raise ValueError("只能删除当前实例目录中的角色")
+                raise ValueError("delete_outside_instance")
             config_path = directory / "config.json"
             if config_path.is_symlink():
-                raise ValueError("不能删除配置文件指向其他位置的角色")
+                raise ValueError("delete_config_symlinked")
             lease = self._leases.get(role_id)
             instance = GatewayInstance.resolve(config_path=config_path)
             runtime = lease.runtime if lease else GatewayRuntime(paths=instance.paths)
             # Releasing our lease alone can leave a process held by another client alive.
             result = await asyncio.to_thread(runtime.stop)
             if result.status.running:
-                raise ValueError("角色进程未能停止，未删除数据，请稍后重试")
+                raise ValueError("delete_stop_failed")
             if lease:
                 await asyncio.to_thread(lease.release)
             self._leases.pop(role_id, None)
@@ -385,13 +385,13 @@ class CharacterManager:
     async def mutate(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         if action in {"characters.import", "characters.create", "characters.update"}:
             if action == "characters.update" and not isinstance(payload.get("id"), str):
-                raise ValueError("Character id is required")
+                raise ValueError("character_id_invalid")
             async with self._lock:
                 create = self.create_agent if action == "characters.create" else self.import_card
                 return await asyncio.to_thread(create, payload)
         role_id = payload.get("id")
         if not isinstance(role_id, str):
-            raise ValueError("Character id is required")
+            raise ValueError("character_id_invalid")
         if action == "characters.start":
             await self.ensure_started(role_id)
         elif action == "characters.stop":
@@ -399,5 +399,5 @@ class CharacterManager:
         elif action == "characters.delete":
             await self.delete(role_id)
         else:
-            raise ValueError("Unknown character action")
+            raise ValueError("unknown_action")
         return self.listing()

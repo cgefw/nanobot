@@ -17,15 +17,15 @@ MAX_PROFILE_BYTES = 1024 * 1024
 def agent_files(value: object) -> dict[str, str]:
     source = cast(dict[object, object], value) if isinstance(value, dict) else None
     if source is None or set(source) - set(AGENT_FILES):
-        raise ValueError("仅支持 AGENTS.md、SOUL.md 和 USER.md")
+        raise ValueError("agent_file_unsupported")
     files: dict[str, str] = {}
     for name in AGENT_FILES:
         content = source.get(name, "")
         if not isinstance(content, str):
-            raise ValueError(f"{name} 必须是文本")
+            raise ValueError("agent_file_not_text")
         files[name] = content
     if sum(len(content.encode("utf-8")) for content in files.values()) > MAX_PROFILE_BYTES:
-        raise ValueError("Agent 提示词文件总大小不能超过 1 MiB")
+        raise ValueError("agent_files_too_large")
     return files
 
 
@@ -37,10 +37,10 @@ class AgentProfile:
 
     def path(self, name: str) -> Path:
         if name not in AGENT_FILES:
-            raise ValueError("不支持的 Agent 提示词文件")
+            raise ValueError("agent_file_unsupported")
         path = self.workspace / name
         if path.is_symlink() or path.resolve().parent != self.workspace:
-            raise ValueError("Agent 提示词文件必须位于当前工作区内")
+            raise ValueError("agent_file_outside_workspace")
         return path
 
     def files(self) -> dict[str, str]:
@@ -48,14 +48,14 @@ class AgentProfile:
         for name in AGENT_FILES:
             path = self.path(name)
             if path.exists() and path.stat().st_size > MAX_PROFILE_BYTES:
-                raise ValueError(f"{name} 超过大小限制")
+                raise ValueError("agent_files_too_large")
             files[name] = path.read_text(encoding="utf-8") if path.exists() else ""
         return agent_files(files)
 
     def validate(self, files: dict[str, str]) -> None:
         content = "\n\n".join(agent_files(files).values())
         if truncate_text_to_tokens(content, self.budget) != content:
-            raise ValueError("Agent 提示词超过当前模型的上下文预算，请缩短内容")
+            raise ValueError("agent_prompt_over_budget")
 
     def preview(self) -> dict[str, Any]:
         return {"kind": "agent", "card": {"name": self.name}, "files": self.files()}
@@ -63,7 +63,7 @@ class AgentProfile:
     def update(self, payload: dict[str, Any]) -> dict[str, Any]:
         name, content = payload.get("filename"), payload.get("content")
         if not isinstance(name, str) or not isinstance(content, str):
-            raise ValueError("请指定文件名和文本内容")
+            raise ValueError("agent_file_update_invalid")
         path = self.path(name)
         files = self.files()
         files[name] = content

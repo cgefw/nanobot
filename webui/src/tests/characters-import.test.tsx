@@ -68,6 +68,16 @@ describe("character card drop import", () => {
     expect(confirm).toBeEnabled();
   });
 
+  it("localizes gateway error codes and warnings", async () => {
+    requestMutation.mockRejectedValueOnce(new Error("card_png_without_data"));
+    const zone = openImport();
+    fireEvent.drop(zone, { dataTransfer: { files: [cardFile()] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("PNG 中未找到角色卡数据（chara / ccv3）");
+    requestMutation.mockResolvedValueOnce({ ...preview, warnings: ["v3_basic_only"] });
+    fireEvent.drop(zone, { dataTransfer: { files: [cardFile()] } });
+    expect(await screen.findByText("V3：仅支持基础角色字段，不支持资源和 CHARX。")).toBeInTheDocument();
+  });
+
   it("previews a dropped file and waits for confirmation before importing", async () => {
     const zone = openImport();
     const transfer = { types: ["Files"], files: [cardFile()], dropEffect: "none" };
