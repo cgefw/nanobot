@@ -1,6 +1,6 @@
 # 单用户角色陪伴模式
 
-基于 `cgefw/nanobot` 的 `a721806`。保留原有 Agent、工具、Skills、MCP、模型设置和 WebUI 部署方式，新增角色卡与独立角色进程。
+基于 `cgefw/nanobot`，并随上游主线合并更新。保留原有 Agent、工具、Skills、MCP、模型设置和 WebUI 部署方式，新增角色卡与独立角色进程。
 
 ## 使用
 
