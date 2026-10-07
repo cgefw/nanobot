@@ -46,9 +46,9 @@ class CharacterProxy:
         if not match:
             return http_error(404, "Character route not found")
         role_id, path = match.groups()
-        websocket = "websocket" in request.headers.get("Upgrade", "").lower()
+        upgrade = "websocket" in request.headers.get("Upgrade", "").lower()
         bootstrap = path.split("?", 1)[0] == "/webui/bootstrap"
-        if websocket:
+        if upgrade:
             # Characters accept any client id; the parent's current allow-list applies here.
             client_id = query_first(parse_request_path(path)[1], "client_id") or ""
             if not is_allowed(client_id[:128]):
@@ -84,7 +84,7 @@ class CharacterProxy:
                 headers.pop("x-nanobot-auth", None)
                 headers["authorization"] = f"Bearer {endpoint.bootstrap_secret}"
             upstream = f"127.0.0.1:{endpoint.port}"
-            if websocket:
+            if upgrade:
                 socket = await connect(
                     f"ws://{upstream}{path}", additional_headers=headers, proxy=None,
                     max_size=self.http.config.max_message_bytes,
